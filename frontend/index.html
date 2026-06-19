@@ -1,0 +1,1567 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Job Agent</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #f1f5f9;
+      color: #0f172a;
+      min-height: 100vh;
+    }
+
+    /* ── Header ── */
+    .header {
+      background: #0f172a;
+      color: #f8fafc;
+      padding: 0 32px;
+      height: 56px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+    .header-logo { font-size: 17px; font-weight: 700; letter-spacing: -0.3px; }
+    .header-logo span { color: #3b82f6; }
+    .header-back {
+      background: none;
+      border: 1px solid #334155;
+      color: #94a3b8;
+      padding: 6px 14px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 13px;
+    }
+    .header-back:hover { border-color: #94a3b8; color: #f8fafc; }
+    .header-schedule {
+      background: rgba(251,191,36,0.08);
+      color: #fbbf24;
+      border: 1px solid rgba(120,53,15,0.5);
+      padding: 6px 14px;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+    }
+    .header-schedule:hover { border-color: #fbbf24; color: #fde68a; background: rgba(251,191,36,0.14); }
+
+    /* ── Layout ── */
+    .page { max-width: 860px; margin: 0 auto; padding: 40px 24px; transition: margin-right 0.22s ease, max-width 0.22s ease; }
+
+    /* ── Setup Form ── */
+    .setup-title { font-size: 26px; font-weight: 700; margin-bottom: 8px; }
+    .setup-sub { color: #64748b; font-size: 15px; margin-bottom: 32px; }
+
+    .card {
+      background: #fff;
+      border: 1px solid #e2e8f0;
+      border-radius: 12px;
+      padding: 24px;
+      margin-bottom: 20px;
+    }
+    .card-title {
+      font-size: 13px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      color: #64748b;
+      margin-bottom: 18px;
+    }
+
+    .field { margin-bottom: 16px; }
+    .field:last-child { margin-bottom: 0; }
+    .field label {
+      display: block;
+      font-size: 13px;
+      font-weight: 500;
+      color: #374151;
+      margin-bottom: 6px;
+    }
+    .field input[type="text"],
+    .field input[type="number"],
+    .field select {
+      width: 100%;
+      padding: 9px 12px;
+      border: 1px solid #d1d5db;
+      border-radius: 8px;
+      font-size: 14px;
+      color: #0f172a;
+      background: #fff;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    .field input:focus, .field select:focus { border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,0.1); }
+
+    .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+
+    /* File upload */
+    .upload-zone {
+      border: 2px dashed #cbd5e1;
+      border-radius: 10px;
+      padding: 28px;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color 0.15s, background 0.15s;
+      position: relative;
+    }
+    .upload-zone:hover, .upload-zone.has-file { border-color: #3b82f6; background: #eff6ff; }
+    .upload-zone input[type="file"] {
+      position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%;
+    }
+    .upload-icon { font-size: 28px; margin-bottom: 8px; }
+    .upload-label { font-size: 14px; font-weight: 500; color: #374151; }
+    .upload-sub { font-size: 12px; color: #94a3b8; margin-top: 4px; }
+    .upload-filename { font-size: 13px; font-weight: 600; color: #3b82f6; margin-top: 6px; }
+
+    /* Buttons */
+    .btn-primary {
+      background: #3b82f6;
+      color: #fff;
+      border: none;
+      padding: 12px 28px;
+      border-radius: 9px;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      width: 100%;
+      transition: background 0.15s;
+    }
+    .btn-primary:hover:not(:disabled) { background: #2563eb; }
+    .btn-primary:disabled { background: #93c5fd; cursor: not-allowed; }
+
+    .btn-ghost {
+      background: none;
+      border: 1px solid #e2e8f0;
+      color: #374151;
+      padding: 9px 18px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+    }
+    .btn-ghost:hover { border-color: #3b82f6; color: #3b82f6; }
+
+    .error-msg {
+      background: #fef2f2;
+      border: 1px solid #fecaca;
+      color: #dc2626;
+      padding: 12px 16px;
+      border-radius: 8px;
+      font-size: 13px;
+      margin-bottom: 16px;
+    }
+
+    /* ── Scan Progress ── */
+    .progress-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 24px;
+    }
+    .progress-title { font-size: 20px; font-weight: 700; }
+    .pulse {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      color: #3b82f6;
+      font-weight: 500;
+    }
+    .pulse-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: #3b82f6;
+      animation: pulse 1.2s infinite;
+    }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.2} }
+
+    .log-box {
+      background: #0f172a;
+      border-radius: 10px;
+      padding: 16px;
+      height: 340px;
+      overflow-y: auto;
+      font-family: "SF Mono", "Fira Code", monospace;
+      font-size: 12px;
+      line-height: 1.7;
+    }
+    .log-line { color: #94a3b8; }
+    .log-line.ok { color: #34d399; }
+    .log-line.skip { color: #475569; }
+    .log-line.qualify { color: #fbbf24; font-weight: 600; }
+    .log-line.score { color: #c4b5fd; }
+    .log-line.header { color: #60a5fa; }
+
+    /* ── Results ── */
+    .results-header { margin-bottom: 24px; }
+    .results-title { font-size: 22px; font-weight: 700; margin-bottom: 6px; }
+    .results-meta { color: #64748b; font-size: 14px; }
+    .results-meta strong { color: #0f172a; }
+
+    .filter-bar { display: flex; gap: 8px; margin-bottom: 24px; flex-wrap: wrap; }
+    .filter-btn {
+      padding: 6px 16px;
+      border-radius: 20px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      border: 1px solid #e2e8f0;
+      background: #fff;
+      color: #64748b;
+      transition: all 0.15s;
+    }
+    .filter-btn.active {
+      background: #0f172a;
+      border-color: #0f172a;
+      color: #fff;
+    }
+    .filter-btn:hover:not(.active) { border-color: #94a3b8; color: #374151; }
+
+    .no-results {
+      text-align: center;
+      padding: 60px 0;
+      color: #94a3b8;
+    }
+    .no-results-icon { font-size: 40px; margin-bottom: 12px; }
+
+    /* ── Job Cards Grid ── */
+    .jobs-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+      gap: 16px;
+    }
+
+    .job-card {
+      background: #fff;
+      border: 1px solid #e2e8f0;
+      border-radius: 12px;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      transition: box-shadow 0.15s, transform 0.15s;
+      cursor: pointer;
+    }
+    .job-card:hover { box-shadow: 0 4px 16px rgba(0,0,0,0.08); transform: translateY(-1px); }
+    .job-card.dimmed { opacity: 0.55; }
+
+    @keyframes slideIn {
+      from { transform: translateX(100%); }
+      to   { transform: translateX(0); }
+    }
+
+    .score-row { display: flex; align-items: center; gap: 10px; }
+    .score-num {
+      font-size: 22px;
+      font-weight: 800;
+      min-width: 46px;
+      line-height: 1;
+    }
+    .score-bar-bg {
+      flex: 1;
+      height: 7px;
+      background: #f1f5f9;
+      border-radius: 4px;
+      overflow: hidden;
+    }
+    .score-bar-fill { height: 100%; border-radius: 4px; transition: width 0.4s; }
+    .badge {
+      font-size: 10px;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 20px;
+      white-space: nowrap;
+    }
+    .badge-swe { background: #dbeafe; color: #1d4ed8; }
+    .badge-qualifying { background: #d1fae5; color: #065f46; }
+
+    .job-title { font-weight: 600; font-size: 15px; line-height: 1.35; color: #0f172a; }
+    .job-company { font-size: 13px; color: #64748b; margin-top: 2px; }
+
+    .job-meta { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .job-location { font-size: 12px; color: #475569; }
+
+    .source-badge {
+      font-size: 10px;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 20px;
+      color: #fff;
+    }
+
+    .job-reason {
+      font-size: 12px;
+      color: #475569;
+      line-height: 1.55;
+      border-left: 3px solid;
+      padding-left: 10px;
+    }
+
+    .apply-btn {
+      display: inline-block;
+      padding: 8px 16px;
+      background: #3b82f6;
+      color: #fff;
+      border-radius: 8px;
+      text-decoration: none;
+      font-size: 13px;
+      font-weight: 500;
+      align-self: flex-start;
+      transition: background 0.15s;
+    }
+    .apply-btn:hover { background: #2563eb; }
+
+    .done-banner {
+      background: #f0fdf4;
+      border: 1px solid #bbf7d0;
+      border-radius: 10px;
+      padding: 14px 18px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 24px;
+    }
+    .done-banner-text { font-size: 14px; font-weight: 600; color: #15803d; }
+    .done-banner-sub { font-size: 12px; color: #16a34a; margin-top: 2px; }
+
+    /* ── Category multi-select ── */
+    .cat-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      margin-bottom: 12px;
+    }
+    .cat-count { font-size: 12px; color: #94a3b8; }
+    .cat-toggle-all {
+      font-size: 12px;
+      color: #3b82f6;
+      cursor: pointer;
+      background: none;
+      border: none;
+      padding: 0;
+      font-weight: 500;
+    }
+    .cat-toggle-all:hover { text-decoration: underline; }
+    .cat-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      max-height: 220px;
+      overflow-y: auto;
+      padding: 2px 0 4px;
+    }
+    .cat-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 5px 12px;
+      border-radius: 20px;
+      border: 1px solid #e2e8f0;
+      background: #fff;
+      color: #475569;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      user-select: none;
+      transition: all 0.12s;
+      white-space: nowrap;
+    }
+    .cat-chip:hover { border-color: #94a3b8; color: #0f172a; }
+    .cat-chip.selected {
+      border-color: transparent;
+      color: #fff;
+      font-weight: 600;
+    }
+
+    /* ── Schedule modal ── */
+    .modal-backdrop {
+      position: fixed; inset: 0; background: rgba(0,0,0,0.45);
+      z-index: 200; display: flex; align-items: center; justify-content: center;
+      padding: 16px;
+    }
+    .modal-box {
+      background: #fff; border-radius: 16px; padding: 28px 32px;
+      width: 100%; max-width: 400px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.18);
+    }
+    .modal-header {
+      display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px;
+    }
+    .modal-title { font-size: 16px; font-weight: 700; color: #0f172a; }
+    .modal-close {
+      background: none; border: none; cursor: pointer;
+      color: #94a3b8; font-size: 22px; line-height: 1; padding: 0;
+    }
+    .modal-close:hover { color: #0f172a; }
+    .toggle-row {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 12px 0; border-bottom: 1px solid #f1f5f9; margin-bottom: 16px;
+    }
+    .toggle-label { font-size: 14px; font-weight: 500; color: #374151; }
+    .toggle-track {
+      width: 44px; height: 24px; border-radius: 12px; cursor: pointer;
+      position: relative; transition: background 0.2s; border: none; padding: 0;
+    }
+    .toggle-thumb {
+      position: absolute; top: 3px; width: 18px; height: 18px;
+      border-radius: 50%; background: #fff;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.2); transition: left 0.2s;
+    }
+    .btn-schedule-save {
+      width: 100%; padding: 11px; border-radius: 9px; border: none;
+      background: #0f172a; color: #fff; font-size: 14px; font-weight: 600;
+      cursor: pointer; margin-top: 20px; transition: background 0.15s;
+    }
+    .btn-schedule-save:hover:not(:disabled) { background: #1e293b; }
+    .btn-schedule-save:disabled { background: #94a3b8; cursor: not-allowed; }
+
+    /* ── Markdown render inside sidebar ── */
+    .md-content { font-size: 13px; line-height: 1.6; color: #0f172a; }
+    .md-content h1 { font-size: 16px; font-weight: 700; margin: 14px 0 6px; }
+    .md-content h2 { font-size: 14px; font-weight: 700; margin: 12px 0 5px; }
+    .md-content h3 { font-size: 13px; font-weight: 700; margin: 10px 0 4px; }
+    .md-content p  { margin: 6px 0; }
+    .md-content ul, .md-content ol { padding-left: 18px; margin: 6px 0; }
+    .md-content li { margin: 3px 0; }
+    .md-content strong { font-weight: 700; }
+    .md-content em { font-style: italic; }
+    .md-content code { background: #e2e8f0; padding: 1px 5px; border-radius: 4px; font-size: 12px; font-family: monospace; }
+    .md-content pre { background: #f1f5f9; padding: 10px 12px; border-radius: 8px; overflow-x: auto; margin: 8px 0; }
+    .md-content pre code { background: none; padding: 0; font-size: 12px; }
+    .md-content a { color: #3b82f6; text-decoration: underline; }
+    .md-content blockquote { border-left: 3px solid #cbd5e1; padding-left: 10px; color: #64748b; margin: 8px 0; }
+    .md-content hr { border: none; border-top: 1px solid #e2e8f0; margin: 12px 0; }
+    .md-content *:first-child { margin-top: 0; }
+    .md-content *:last-child  { margin-bottom: 0; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone@7/babel.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
+
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    // ── access-code gate ─────────────────────────────────────
+    // Intercept all /api/* fetches to inject X-Access-Code and handle 401.
+    (function () {
+      const _raw = window.fetch.bind(window);
+      window.fetch = function (url, opts = {}) {
+        if (typeof url === 'string' && url.startsWith('/api/')) {
+          const code = localStorage.getItem('jobAgentCode') || '';
+          opts = { ...opts, headers: { 'X-Access-Code': code, ...(opts.headers || {}) } };
+        }
+        return _raw(url, opts).then(res => {
+          if (res.status === 401) {
+            localStorage.removeItem('jobAgentCode');
+            window.dispatchEvent(new Event('auth-clear'));
+          }
+          return res;
+        });
+      };
+    })();
+
+    function AccessGate({ onAuth }) {
+      const [input, setInput] = useState('');
+      const [err, setErr]     = useState('');
+      async function handleSubmit(e) {
+        e.preventDefault();
+        // Probe the server with the entered code before accepting it.
+        try {
+          const res = await fetch('/api/results', {
+            headers: { 'X-Access-Code': input },
+          });
+          if (res.status === 401) { setErr('Wrong access code.'); return; }
+        } catch (_) { /* server offline — accept anyway, will fail later */ }
+        localStorage.setItem('jobAgentCode', input);
+        onAuth(input);
+      }
+      return (
+        <div style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          height: '100vh', background: '#f8fafc',
+        }}>
+          <form onSubmit={handleSubmit} style={{
+            background: '#fff', borderRadius: '16px', padding: '40px 48px',
+            boxShadow: '0 4px 24px #0001', display: 'flex', flexDirection: 'column',
+            gap: '16px', minWidth: '320px',
+          }}>
+            <div style={{ fontWeight: 700, fontSize: '20px', color: '#0f172a' }}>Job Agent</div>
+            <div style={{ fontSize: '14px', color: '#64748b' }}>Enter your access code to continue.</div>
+            <input
+              autoFocus
+              type="password"
+              placeholder="Access code"
+              value={input}
+              onChange={e => { setInput(e.target.value); setErr(''); }}
+              style={{
+                padding: '10px 14px', borderRadius: '8px', border: '1px solid #cbd5e1',
+                fontSize: '14px', outline: 'none',
+              }}
+            />
+            {err && <div style={{ color: '#ef4444', fontSize: '13px' }}>{err}</div>}
+            <button type="submit" style={{
+              background: '#3b82f6', color: '#fff', border: 'none',
+              borderRadius: '8px', padding: '10px', fontSize: '14px',
+              fontWeight: 600, cursor: 'pointer',
+            }}>Continue</button>
+          </form>
+        </div>
+      );
+    }
+
+    // ── helpers ──────────────────────────────────────────────
+    function stripMetaSections(md) {
+      const metaPattern = /^#{1,3}\s+(application checklist|checklist|next steps?|how to (use|apply)|tips for applying|summary)/i;
+      const lines = md.split('\n');
+      const out = [];
+      let skip = false;
+      for (const line of lines) {
+        if (/^#{1,3}\s+/.test(line)) skip = metaPattern.test(line);
+        if (!skip) out.push(line);
+      }
+      return out.join('\n').trim();
+    }
+
+    function CopyButton({ content }) {
+      const [copied, setCopied] = useState(false);
+      function handleCopy() {
+        navigator.clipboard.writeText(stripMetaSections(content)).then(() => {
+          setCopied(true);
+          setTimeout(() => setCopied(false), 2000);
+        });
+      }
+      return (
+        <button type="button" onClick={handleCopy} style={{
+          marginTop: '6px', padding: '5px 14px', borderRadius: '8px',
+          border: '1px solid #3b82f6', background: '#eff6ff',
+          color: '#1d4ed8', fontSize: '12px', cursor: 'pointer', fontWeight: 500,
+        }}>
+          {copied ? '✓ Copied' : 'Copy'}
+        </button>
+      );
+    }
+
+    function scoreColor(s) {
+      if (s >= 80) return '#10b981';
+      if (s >= 60) return '#f59e0b';
+      return '#ef4444';
+    }
+
+    function sourceBg(src) {
+      const cat = CATEGORIES.find(c => c.value === src);
+      if (cat) return cat.color;
+      return '#64748b';
+    }
+
+    function logClass(line) {
+      if (line.startsWith('[✓]') || line.startsWith('[*]')) return 'log-line ok';
+      if (line.startsWith('[!]')) return 'log-line skip';
+      if (line.includes('[QUALIFYING]')) return 'log-line qualify';
+      if (line.includes('Score ')) return 'log-line score';
+      if (line.startsWith('===') || line.startsWith('  Super')) return 'log-line header';
+      if (line.includes('[Skip]')) return 'log-line skip';
+      return 'log-line';
+    }
+
+    // ── JobCard ───────────────────────────────────────────────
+    function JobCard({ job, threshold, onSelect }) {
+      const score = job.score ?? 0;
+      const color = scoreColor(score);
+      const isQualifying = score >= threshold;
+
+      return (
+        <div className={`job-card ${!isQualifying ? 'dimmed' : ''}`}
+          onClick={() => onSelect && onSelect(job)}>
+          <div className="score-row">
+            <span className="score-num" style={{ color }}>{score}</span>
+            <div className="score-bar-bg">
+              <div className="score-bar-fill" style={{ width: `${score}%`, background: color }} />
+            </div>
+            {isQualifying && <span className="badge badge-qualifying">✓ Match</span>}
+            {job.priority && <span className="badge badge-swe">{job.priority}</span>}
+          </div>
+
+          <div>
+            <div className="job-title">{job.job_title}</div>
+            <div className="job-company">{job.company_name}</div>
+          </div>
+
+          <div className="job-meta">
+            {job.location && <span className="job-location">📍 {job.location}</span>}
+            {job.work_model && (
+              <span className="job-location">
+                {job.work_model === 'Remote' ? '🌐' : job.work_model === 'Hybrid' ? '🔀' : '🏢'} {job.work_model}
+              </span>
+            )}
+            <span className="source-badge" style={{ background: sourceBg(job.source) }}>
+              {(CATEGORIES.find(c => c.value === job.source) || {}).label || job.source}
+            </span>
+          </div>
+
+          {job.reason && (
+            <p className="job-reason" style={{ borderColor: color }}>{job.reason}</p>
+          )}
+
+          {job.link && (
+            <a className="apply-btn" href={job.link} target="_blank" rel="noreferrer"
+              onClick={e => e.stopPropagation()}>
+              Apply →
+            </a>
+          )}
+        </div>
+      );
+    }
+
+    const CATEGORIES = [
+      { value: 'tech-intern',    label: 'Tech Internships',     color: '#4f46e5' },
+      { value: 'finance-intern', label: 'Finance Internships',  color: '#10b981' },
+    ];
+    const ALL_VALUES = CATEGORIES.map(c => c.value);
+
+    // ── ScheduleModal ─────────────────────────────────────────
+    function ScheduleModal({ onClose }) {
+      const [scheduled, setScheduled] = useState(false);
+      const [hour, setHour] = useState(9);
+      const [minute, setMinute] = useState(0);
+      const [toAddr, setToAddr] = useState('');
+      const [saving, setSaving] = useState(false);
+      const [saved, setSaved] = useState(false);
+      const [error, setError] = useState(null);
+
+      useEffect(() => {
+        fetch('/api/email-schedule')
+          .then(r => r.json())
+          .then(d => {
+            setScheduled(d.scheduled);
+            setHour(d.hour ?? 9);
+            setMinute(d.minute ?? 0);
+            setToAddr(d.to_addr || '');
+          })
+          .catch(() => {});
+      }, []);
+
+      async function handleSave() {
+        setSaving(true);
+        setError(null);
+        setSaved(false);
+        try {
+          const res = await fetch('/api/email-schedule', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ scheduled, hour, minute }),
+          });
+          const data = await res.json();
+          if (!res.ok) { setError(data.error || 'Failed to save schedule.'); return; }
+          setSaved(true);
+          setTimeout(() => setSaved(false), 2500);
+        } catch (e) {
+          setError('Could not reach the server.');
+        } finally {
+          setSaving(false);
+        }
+      }
+
+      const padMin = String(minute).padStart(2, '0');
+      const displayTime = `${String(hour).padStart(2, '0')}:${padMin}`;
+
+      return (
+        <div className="modal-backdrop" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+          <div className="modal-box">
+            <div className="modal-header">
+              <div className="modal-title">Daily Email Reminder</div>
+              <button className="modal-close" onClick={onClose}>×</button>
+            </div>
+
+            {toAddr && (
+              <div style={{ fontSize: '13px', color: '#64748b', marginBottom: '16px' }}>
+                Sends digest to <strong style={{ color: '#0f172a' }}>{toAddr}</strong>
+              </div>
+            )}
+
+            <div className="toggle-row">
+              <span className="toggle-label">Schedule daily email</span>
+              <button
+                className="toggle-track"
+                style={{ background: scheduled ? '#3b82f6' : '#cbd5e1' }}
+                onClick={() => setScheduled(s => !s)}
+              >
+                <span className="toggle-thumb" style={{ left: scheduled ? '23px' : '3px' }} />
+              </button>
+            </div>
+
+            {scheduled && (
+              <div className="field">
+                <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '8px' }}>
+                  Send at (24-hour)
+                </label>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <select value={hour} onChange={e => setHour(Number(e.target.value))}
+                    style={{
+                      padding: '8px 10px', border: '1px solid #d1d5db', borderRadius: '8px',
+                      fontSize: '15px', fontWeight: 600, color: '#0f172a', width: '80px',
+                    }}>
+                    {Array.from({length: 24}, (_, i) => (
+                      <option key={i} value={i}>{String(i).padStart(2, '0')}</option>
+                    ))}
+                  </select>
+                  <span style={{ fontSize: '18px', fontWeight: 700, color: '#94a3b8' }}>:</span>
+                  <select value={minute} onChange={e => setMinute(Number(e.target.value))}
+                    style={{
+                      padding: '8px 10px', border: '1px solid #d1d5db', borderRadius: '8px',
+                      fontSize: '15px', fontWeight: 600, color: '#0f172a', width: '80px',
+                    }}>
+                    {[0, 15, 30, 45].map(m => (
+                      <option key={m} value={m}>{String(m).padStart(2, '0')}</option>
+                    ))}
+                  </select>
+                  <span style={{ fontSize: '13px', color: '#64748b' }}>daily</span>
+                </div>
+              </div>
+            )}
+
+            {!scheduled && (
+              <p style={{ fontSize: '13px', color: '#94a3b8', marginTop: '4px' }}>
+                No daily email scheduled. Toggle on to set a time.
+              </p>
+            )}
+
+            {error && (
+              <div className="error-msg" style={{ marginTop: '14px' }}>⚠️ {error}</div>
+            )}
+
+            {saved && (
+              <div style={{
+                marginTop: '14px', padding: '10px 14px', borderRadius: '8px',
+                background: '#f0fdf4', border: '1px solid #bbf7d0',
+                color: '#15803d', fontSize: '13px', fontWeight: 500,
+              }}>
+                ✓ {scheduled ? `Scheduled — daily at ${displayTime}` : 'Schedule removed'}
+              </div>
+            )}
+
+            <button className="btn-schedule-save" onClick={handleSave} disabled={saving}>
+              {saving ? 'Saving…' : 'Save Schedule'}
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    // ── SetupPage ─────────────────────────────────────────────
+    function SetupPage({ onScanStart, onViewLast, hasLastRun }) {
+      const [name, setName] = useState('');
+      const [locationPref, setLocationPref] = useState('');
+      const [role, setRole] = useState('');
+      const [selectedSources, setSelectedSources] = useState(new Set());
+      const [workModels, setWorkModels] = useState(new Set());
+      const [threshold, setThreshold] = useState(70);  // 50 | 70 | 90
+      const [resumeFile, setResumeFile] = useState(null);
+      const [loading, setLoading] = useState(false);
+      const [error, setError] = useState(null);
+      const [showSchedule, setShowSchedule] = useState(false);
+
+      function toggleCat(value) {
+        setSelectedSources(prev => {
+          const next = new Set(prev);
+          next.has(value) ? next.delete(value) : next.add(value);
+          return next;
+        });
+      }
+
+      function toggleAll() {
+        setSelectedSources(prev =>
+          prev.size === ALL_VALUES.length ? new Set() : new Set(ALL_VALUES)
+        );
+      }
+
+      function toggleWM(wm) {
+        setWorkModels(prev => {
+          const next = new Set(prev);
+          next.has(wm) ? next.delete(wm) : next.add(wm);
+          return next;
+        });
+      }
+
+      async function handleSubmit(e) {
+        e.preventDefault();
+        if (!resumeFile) { setError('Please upload a resume PDF.'); return; }
+        if (selectedSources.size === 0) { setError('Please select at least one job category.'); return; }
+        setError(null);
+        setLoading(true);
+
+        const sourcesStr = [...selectedSources].join(',');
+        const fd = new FormData();
+        fd.append('resume_pdf', resumeFile);
+        fd.append('role', role);
+        fd.append('sources', sourcesStr);
+        fd.append('threshold', String(threshold));
+        fd.append('location', locationPref);
+        fd.append('work_model', [...workModels].join(','));
+
+        try {
+          const res = await fetch('/api/scan', { method: 'POST', body: fd });
+          const data = await res.json();
+          if (!res.ok) { setError(data.error || 'Failed to start scan.'); setLoading(false); return; }
+          onScanStart({ role, sources: sourcesStr, threshold, workModels: [...workModels] }, { name, locationPref });
+        } catch (err) {
+          setError('Could not reach the server. Is it running?');
+          setLoading(false);
+        }
+      }
+
+      return (
+        <>
+          {showSchedule && <ScheduleModal onClose={() => setShowSchedule(false)} />}
+          <div className="header">
+            <div className="header-logo">Job<span>Agent</span></div>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button className="header-schedule" onClick={() => setShowSchedule(true)}>
+                📅 Daily Email Alerts
+              </button>
+              {hasLastRun && (
+                <button className="header-back" onClick={onViewLast}>View Last Results</button>
+              )}
+            </div>
+          </div>
+          <div className="page">
+            <div className="setup-title">Find Your Best Match</div>
+            <div className="setup-sub">Upload your resume and configure your search to get started.</div>
+
+            <form onSubmit={handleSubmit}>
+              {/* Profile */}
+              <div className="card">
+                <div className="card-title">Your Profile</div>
+                <div className="field-row">
+                  <div className="field">
+                    <label>Your Name</label>
+                    <input type="text" value={name} onChange={e => setName(e.target.value)}
+                      placeholder="e.g. Emily Zhang" />
+                  </div>
+                  <div className="field">
+                    <label>Location Filter <span style={{fontWeight:400,color:'#94a3b8'}}>(leave blank for all)</span></label>
+                    <input type="text" value={locationPref} onChange={e => setLocationPref(e.target.value)}
+                      placeholder="e.g. Vancouver · Toronto · Ottawa" />
+                  </div>
+                </div>
+              </div>
+
+              {/* Resume */}
+              <div className="card">
+                <div className="card-title">Resume</div>
+                <div className={`upload-zone ${resumeFile ? 'has-file' : ''}`}>
+                  <input type="file" accept=".pdf"
+                    onChange={e => setResumeFile(e.target.files[0] || null)} />
+                  <div className="upload-icon">{resumeFile ? '📄' : '⬆️'}</div>
+                  <div className="upload-label">
+                    {resumeFile ? 'Resume ready' : 'Click to upload resume PDF'}
+                  </div>
+                  {resumeFile
+                    ? <div className="upload-filename">{resumeFile.name}</div>
+                    : <div className="upload-sub">PDF files only</div>
+                  }
+                </div>
+              </div>
+
+              {/* Search config */}
+              <div className="card">
+                <div className="card-title">Search Settings</div>
+                <div className="field">
+                  <label>Job Type / Role</label>
+                  <input type="text" value={role} onChange={e => setRole(e.target.value)}
+                    placeholder="e.g. Software Engineer, Financial Analyst" />
+                </div>
+                <div className="field-row">
+                  <div className="field">
+                    <label>Min Score Threshold</label>
+                    <div style={{display:'flex', gap:'8px'}}>
+                      {[
+                        {v: 50, label: 'Broad'},
+                        {v: 70, label: 'Standard'},
+                        {v: 90, label: 'Best Match'},
+                      ].map(({v, label}) => (
+                        <button key={v} type="button"
+                          onClick={() => setThreshold(v)}
+                          style={{
+                            flex: 1, padding: '9px 0 8px', border: '1px solid',
+                            borderColor: threshold === v ? '#3b82f6' : '#d1d5db',
+                            borderRadius: '8px', cursor: 'pointer',
+                            background: threshold === v ? '#eff6ff' : '#fff',
+                            color: threshold === v ? '#1d4ed8' : '#374151',
+                          }}>
+                          <div style={{fontWeight:'700', fontSize:'15px'}}>{v}</div>
+                          <div style={{fontSize:'11px', marginTop:'2px',
+                            color: threshold === v ? '#3b82f6' : '#94a3b8'}}>{label}</div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="field">
+                    <label>Work Model</label>
+                    <div style={{display:'flex', gap:'8px'}}>
+                      {[
+                        { wm: 'Remote',  color: '#0891b2' },
+                        { wm: 'Hybrid',  color: '#7c3aed' },
+                        { wm: 'On Site', color: '#ea580c' },
+                      ].map(({wm, color}) => {
+                        const on = workModels.has(wm);
+                        return (
+                          <button key={wm} type="button"
+                            onClick={() => toggleWM(wm)}
+                            style={{
+                              flex: 1, padding: '9px 0 8px', border: '1px solid',
+                              borderColor: on ? color : '#d1d5db',
+                              borderRadius: '8px', cursor: 'pointer',
+                              background: on ? color + '18' : '#fff',
+                              color: on ? color : '#374151',
+                              fontSize: '12px', fontWeight: on ? '700' : '500',
+                            }}>
+                            {wm}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Job Categories */}
+              <div className="card">
+                <div className="cat-header">
+                  <div className="card-title" style={{margin:0}}>Job Categories</div>
+                  <div style={{display:'flex', alignItems:'center', gap:'12px'}}>
+                    <span className="cat-count">{selectedSources.size} / {CATEGORIES.length} selected · 30 listings each</span>
+                    <button type="button" className="cat-toggle-all" onClick={toggleAll}>
+                      {selectedSources.size === ALL_VALUES.length ? 'Deselect all' : 'Select all'}
+                    </button>
+                  </div>
+                </div>
+                <div className="cat-grid">
+                  {CATEGORIES.map(({ value, label, color }) => {
+                    const on = selectedSources.has(value);
+                    return (
+                      <span key={value}
+                        className={`cat-chip ${on ? 'selected' : ''}`}
+                        style={on ? { background: color, borderColor: color } : {}}
+                        onClick={() => toggleCat(value)}>
+                        {label}
+                      </span>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {error && (
+                <div className="error-msg" style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}>
+                  <span>⚠️ {error}</span>
+                  {error.includes('already running') && (
+                    <button type="button" style={{
+                      marginLeft:'12px', padding:'4px 12px', fontSize:'12px', cursor:'pointer',
+                      background:'#dc2626', color:'#fff', border:'none', borderRadius:'6px',
+                    }} onClick={async () => {
+                      await fetch('/api/reset', {method:'POST'});
+                      setError(null);
+                    }}>Force Reset</button>
+                  )}
+                </div>
+              )}
+
+              <button type="submit" className="btn-primary" disabled={loading || !resumeFile}>
+                {loading ? 'Starting scan…' : '🔍 Run Scan'}
+              </button>
+            </form>
+          </div>
+        </>
+      );
+    }
+
+    // ── ResultsPage ───────────────────────────────────────────
+    function ResultsPage({ scanConfig, profile, onBack }) {
+      const [scanning, setScanning] = useState(true);
+      const [logLines, setLogLines] = useState([]);
+      const [resultData, setResultData] = useState(null);
+      const [filter, setFilter] = useState('qualifying');
+      const [selectedJob, setSelectedJob] = useState(null);
+      const [loadingMore, setLoadingMore] = useState(false);
+      const [stopping, setStopping] = useState(false);
+      const logRef = useRef(null);
+
+      useEffect(() => {
+        if (!scanning) return;
+        let seenRunning = false;
+        const iv = setInterval(async () => {
+          try {
+            const status = await fetch('/api/status').then(r => r.json());
+            setLogLines(status.lines || []);
+            if (status.running) seenRunning = true;
+            if (seenRunning && !status.running && status.done) {
+              clearInterval(iv);
+              setScanning(false);
+              setLoadingMore(false);
+              const data = await fetch('/api/results').then(r => r.json());
+              setResultData(data);
+              const t = scanConfig?.threshold ?? 70;
+              const q = (data.results || []).filter(r => r.score !== null && r.score >= t);
+              if (q.length === 0) setFilter('all');
+            }
+          } catch (_) {}
+        }, 1000);
+        return () => clearInterval(iv);
+      }, [scanning]);
+
+      async function handleStop() {
+        setStopping(true);
+        await fetch('/api/stop', { method: 'POST' }).catch(() => {});
+      }
+
+      async function handleLoadMore() {
+        setLoadingMore(true);
+        const res = await fetch('/api/score-more', { method: 'POST' });
+        if (!res.ok) { setLoadingMore(false); return; }
+        setScanning(true);
+      }
+
+      // Auto-scroll log
+      useEffect(() => {
+        if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
+      }, [logLines]);
+
+      const threshold = scanConfig?.threshold ?? 70;
+      const scored = (resultData?.results || []).filter(r => r.score !== null);
+      const qualifying = scored.filter(r => r.score >= threshold);
+
+      const displayed = filter === 'qualifying' ? qualifying
+        : filter === 'below' ? scored.filter(r => r.score < threshold)
+        : scored;
+
+      return (
+        <>
+          <div className="header">
+            <div className="header-logo">Job<span>Agent</span></div>
+            <button className="header-back" onClick={onBack}>← New Scan</button>
+          </div>
+          <div className="page" style={selectedJob ? { marginRight: '480px', marginLeft: '0' } : {}}>
+            {/* Progress / scanning state */}
+            {scanning ? (
+              <div className="card">
+                <div className="progress-header">
+                  <div className="progress-title">
+                    Scanning <span style={{ color: '#3b82f6' }}>{scanConfig?.role}</span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    {!stopping && <div className="pulse"><div className="pulse-dot" />Running…</div>}
+                    {stopping && <span style={{ fontSize: '13px', color: '#f59e0b', fontWeight: 500 }}>Stopping…</span>}
+                    <button onClick={handleStop} disabled={stopping} style={{
+                      padding: '6px 14px', borderRadius: '7px', border: 'none',
+                      background: stopping ? '#fecaca' : '#ef4444',
+                      color: '#fff', fontSize: '13px', fontWeight: 600, cursor: stopping ? 'default' : 'pointer',
+                      opacity: stopping ? 0.6 : 1,
+                    }}>
+                      ⏹ Stop
+                    </button>
+                  </div>
+                </div>
+                <div className="log-box" ref={logRef}>
+                  {logLines.map((line, i) => (
+                    <div key={i} className={logClass(line)}>{line}</div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <>
+                {/* Done banner */}
+                <div className="done-banner">
+                  <div>
+                    <div className="done-banner-text">✓ Scan complete</div>
+                    <div className="done-banner-sub">
+                      {resultData?.total_scraped ?? 0} scraped &nbsp;·&nbsp;
+                      {qualifying.length} qualifying (score ≥ {threshold})
+                      {profile?.name && <> &nbsp;·&nbsp; {profile.name}</>}
+                      {profile?.locationPref && <> &nbsp;·&nbsp; 📍 {profile.locationPref}</>}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Results header + filters */}
+                <div className="results-header">
+                  <div className="results-title">Results — {scanConfig?.role}</div>
+                </div>
+
+                <div className="filter-bar">
+                  {[
+                    { key: 'qualifying', label: `✓ Qualifying (${qualifying.length})` },
+                    { key: 'all', label: `All scored (${scored.length})` },
+                    { key: 'below', label: `Below threshold (${scored.length - qualifying.length})` },
+                  ].map(({ key, label }) => (
+                    <button key={key}
+                      className={`filter-btn ${filter === key ? 'active' : ''}`}
+                      onClick={() => setFilter(key)}>
+                      {label}
+                    </button>
+                  ))}
+                </div>
+
+                {(resultData?.pending_count > 0 || loadingMore) && (
+                  <div style={{ display: 'flex', gap: '10px', marginBottom: '16px' }}>
+                    <button onClick={handleLoadMore} disabled={loadingMore}
+                      style={{
+                        flex: 1, padding: '12px',
+                        background: '#f8fafc', border: '1px dashed #94a3b8',
+                        borderRadius: '10px', cursor: loadingMore ? 'default' : 'pointer',
+                        color: '#475569', fontSize: '13px', fontWeight: 500,
+                        opacity: loadingMore ? 0.6 : 1,
+                      }}>
+                      {loadingMore ? 'Scoring…' : `Load ${resultData.pending_count} more results →`}
+                    </button>
+                    {loadingMore && (
+                      <button onClick={handleStop} disabled={stopping}
+                        style={{
+                          padding: '12px 20px', borderRadius: '10px', border: 'none',
+                          background: stopping ? '#fecaca' : '#ef4444',
+                          color: '#fff', fontSize: '13px', fontWeight: 600,
+                          cursor: stopping ? 'default' : 'pointer',
+                          opacity: stopping ? 0.6 : 1, whiteSpace: 'nowrap',
+                        }}>
+                        ⏹ Stop
+                      </button>
+                    )}
+                  </div>
+                )}
+
+                {displayed.length > 0 && (
+                  <div style={{
+                    display: 'flex', alignItems: 'center', gap: '10px',
+                    padding: '10px 14px', marginBottom: '16px',
+                    background: 'linear-gradient(135deg, #eff6ff, #f0f9ff)',
+                    border: '1px solid #bfdbfe', borderRadius: '10px',
+                    fontSize: '13px', color: '#1d4ed8',
+                  }}>
+                    <span style={{ fontSize: '16px' }}>✨</span>
+                    <span><strong>Click any job card</strong> to open the AI assistant — get resume tips, a tailored cover letter, skill gap analysis, and interview prep.</span>
+                  </div>
+                )}
+
+                {displayed.length === 0 ? (
+                  <div className="no-results">
+                    <div className="no-results-icon">🔍</div>
+                    <div>No jobs in this category</div>
+                  </div>
+                ) : (
+                  <div className="jobs-grid">
+                    {displayed.map((job, i) => (
+                      <JobCard key={i} job={job} threshold={threshold} onSelect={setSelectedJob} />
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+          {selectedJob && <JobSidebar job={selectedJob} onClose={() => setSelectedJob(null)} />}
+        </>
+      );
+    }
+
+    // ── ViewResultsPage (previous run, no scanning) ───────────
+    function ViewResultsPage({ onBack }) {
+      const [resultData, setResultData] = useState(null);
+      const [filter, setFilter] = useState('qualifying');
+      const [selectedJob, setSelectedJob] = useState(null);
+      const [loadingMore, setLoadingMore] = useState(false);
+      const [scanning, setScanning] = useState(false);
+      const [stopping, setStopping] = useState(false);
+
+      async function handleStop() {
+        setStopping(true);
+        await fetch('/api/stop', { method: 'POST' }).catch(() => {});
+      }
+
+      function reloadResults() {
+        fetch('/api/results').then(r => r.json()).then(data => {
+          setResultData(data);
+          const t = data.threshold ?? 70;
+          const q = (data.results || []).filter(r => r.score !== null && r.score >= t);
+          if (q.length === 0) setFilter('all');
+        }).catch(() => {});
+      }
+
+      useEffect(() => { reloadResults(); }, []);
+
+      useEffect(() => {
+        if (!scanning) return;
+        let seenRunning = false;
+        const iv = setInterval(async () => {
+          try {
+            const status = await fetch('/api/status').then(r => r.json());
+            if (status.running) seenRunning = true;
+            if (seenRunning && !status.running && status.done) {
+              clearInterval(iv);
+              setScanning(false);
+              setLoadingMore(false);
+              setStopping(false);
+              reloadResults();
+            }
+          } catch (_) {}
+        }, 1000);
+        return () => clearInterval(iv);
+      }, [scanning]);
+
+      async function handleLoadMore() {
+        setLoadingMore(true);
+        const res = await fetch('/api/score-more', { method: 'POST' });
+        if (!res.ok) { setLoadingMore(false); return; }
+        setScanning(true);
+      }
+
+      if (!resultData) return (
+        <>
+          <div className="header">
+            <div className="header-logo">Job<span>Agent</span></div>
+            <button className="header-back" onClick={onBack}>← Setup</button>
+          </div>
+          <div className="page" style={{ textAlign: 'center', paddingTop: 80, color: '#94a3b8' }}>
+            Loading results…
+          </div>
+        </>
+      );
+
+      const threshold = resultData.threshold ?? 70;
+      const scored = (resultData.results || []).filter(r => r.score !== null);
+      const qualifying = scored.filter(r => r.score >= threshold);
+      const displayed = filter === 'qualifying' ? qualifying
+        : filter === 'below' ? scored.filter(r => r.score < threshold)
+        : scored;
+
+      return (
+        <>
+          <div className="header">
+            <div className="header-logo">Job<span>Agent</span></div>
+            <button className="header-back" onClick={onBack}>← New Scan</button>
+          </div>
+          <div className="page" style={selectedJob ? { marginRight: '480px', marginLeft: '0' } : {}}>
+            <div className="done-banner">
+              <div>
+                <div className="done-banner-text">Last Run Results</div>
+                <div className="done-banner-sub">
+                  {resultData.total_scraped ?? 0} scraped &nbsp;·&nbsp;
+                  {qualifying.length} qualifying (score ≥ {threshold}) &nbsp;·&nbsp;
+                  Role: {resultData.role}
+                </div>
+              </div>
+            </div>
+
+            <div className="results-header">
+              <div className="results-title">Results — {resultData.role}</div>
+            </div>
+
+            <div className="filter-bar">
+              {[
+                { key: 'qualifying', label: `✓ Qualifying (${qualifying.length})` },
+                { key: 'all', label: `All scored (${scored.length})` },
+                { key: 'below', label: `Below threshold (${scored.length - qualifying.length})` },
+              ].map(({ key, label }) => (
+                <button key={key}
+                  className={`filter-btn ${filter === key ? 'active' : ''}`}
+                  onClick={() => setFilter(key)}>
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            {(resultData?.pending_count > 0 || loadingMore) && (
+              <div style={{ display: 'flex', gap: '10px', marginBottom: '16px' }}>
+                <button onClick={handleLoadMore} disabled={loadingMore}
+                  style={{
+                    flex: 1, padding: '12px',
+                    background: '#f8fafc', border: '1px dashed #94a3b8',
+                    borderRadius: '10px', cursor: loadingMore ? 'default' : 'pointer',
+                    color: '#475569', fontSize: '13px', fontWeight: 500,
+                    opacity: loadingMore ? 0.6 : 1,
+                  }}>
+                  {loadingMore ? 'Scoring…' : `Load ${resultData.pending_count} more results →`}
+                </button>
+                {loadingMore && (
+                  <button onClick={handleStop} disabled={stopping}
+                    style={{
+                      padding: '12px 20px', borderRadius: '10px', border: 'none',
+                      background: stopping ? '#fecaca' : '#ef4444',
+                      color: '#fff', fontSize: '13px', fontWeight: 600,
+                      cursor: stopping ? 'default' : 'pointer',
+                      opacity: stopping ? 0.6 : 1, whiteSpace: 'nowrap',
+                    }}>
+                    ⏹ Stop
+                  </button>
+                )}
+              </div>
+            )}
+
+            {displayed.length > 0 && (
+              <div style={{
+                display: 'flex', alignItems: 'center', gap: '10px',
+                padding: '10px 14px', marginBottom: '16px',
+                background: 'linear-gradient(135deg, #eff6ff, #f0f9ff)',
+                border: '1px solid #bfdbfe', borderRadius: '10px',
+                fontSize: '13px', color: '#1d4ed8',
+              }}>
+                <span style={{ fontSize: '16px' }}>✨</span>
+                <span><strong>Click any job card</strong> to open the AI assistant — get resume tips, a tailored cover letter, skill gap analysis, and interview prep.</span>
+              </div>
+            )}
+
+            {displayed.length === 0 ? (
+              <div className="no-results">
+                <div className="no-results-icon">🔍</div>
+                <div>No jobs in this category</div>
+              </div>
+            ) : (
+              <div className="jobs-grid">
+                {displayed.map((job, i) => (
+                  <JobCard key={i} job={job} threshold={threshold} onSelect={setSelectedJob} />
+                ))}
+              </div>
+            )}
+          </div>
+          {selectedJob && <JobSidebar job={selectedJob} onClose={() => setSelectedJob(null)} />}
+        </>
+      );
+    }
+
+    // ── JobSidebar ────────────────────────────────────────────
+    const JOB_CHIPS = ['Resume tips', 'Cover letter', 'Skill gaps', 'Interview prep'];
+
+    function JobSidebar({ job, onClose }) {
+      const [jd, setJd] = useState('');
+      const [messages, setMessages] = useState([]);
+      const [input, setInput] = useState('');
+      const [loading, setLoading] = useState(false);
+      const bottomRef = useRef(null);
+
+      useEffect(() => { setJd(''); setMessages([]); setInput(''); }, [job.link]);
+      useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages, loading]);
+
+      async function sendMessage(text) {
+        const t = (typeof text === 'string' ? text : input).trim();
+        if (!t || loading) return;
+        const isPdf = /tailor.*(resume|cv)|cover letter/i.test(t);
+        const pdfType = /cover letter/i.test(t) ? 'cover-letter' : 'tailored-resume';
+        const userMsg = { role: 'user', content: t };
+        const next = [...messages, userMsg];
+        setMessages(next);
+        setInput('');
+        setLoading(true);
+        try {
+          const res = await fetch('/api/chat-job', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              messages: next,
+              job_title: job.job_title || '',
+              company: job.company_name || '',
+              jd,
+            }),
+          });
+          if (!res.ok) throw new Error(`Server error ${res.status}`);
+          const data = await res.json();
+          if (!data.reply) throw new Error(data.error || 'No response');
+          setMessages(prev => [...prev, { role: 'assistant', content: data.reply, pdf: isPdf, pdfType }]);
+        } catch (e) {
+          setMessages(prev => [...prev, { role: 'assistant', content: `**Error:** ${e.message}` }]);
+        } finally {
+          setLoading(false);
+        }
+      }
+
+      return (
+        <div style={{
+          position: 'fixed', right: 0, top: 56, bottom: 0, width: 480,
+          background: '#fff', zIndex: 50,
+          display: 'flex', flexDirection: 'column',
+          boxShadow: '-4px 0 24px rgba(0,0,0,0.10)', borderLeft: '1px solid #e2e8f0',
+          animation: 'slideIn 0.22s ease',
+        }}>
+          {/* Job header */}
+          <div style={{ padding: '16px 20px 12px', borderBottom: '1px solid #e2e8f0', flexShrink: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+              <div style={{ flex: 1, minWidth: 0, marginRight: 12 }}>
+                <div style={{ fontWeight: 700, fontSize: '15px', color: '#0f172a', lineHeight: 1.3 }}>
+                  {job.job_title}
+                </div>
+                <div style={{ color: '#64748b', fontSize: '13px', marginTop: '2px' }}>
+                  {job.company_name}
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '6px', flexWrap: 'wrap' }}>
+                  {job.location && <span style={{ color: '#94a3b8', fontSize: '12px' }}>📍 {job.location}</span>}
+                  {job.work_model && (
+                    <span style={{ color: '#94a3b8', fontSize: '12px' }}>
+                      {job.work_model === 'Remote' ? '🌐' : job.work_model === 'Hybrid' ? '🔀' : '🏢'} {job.work_model}
+                    </span>
+                  )}
+                  {job.score != null && (
+                    <span style={{ fontSize: '12px', color: scoreColor(job.score), fontWeight: 700 }}>{job.score}/100</span>
+                  )}
+                  {job.link && (
+                    <a href={job.link} target="_blank" rel="noopener noreferrer"
+                      style={{ fontSize: '12px', color: '#3b82f6', textDecoration: 'none' }}>Apply ↗</a>
+                  )}
+                </div>
+              </div>
+              <button onClick={onClose} style={{
+                border: 'none', background: 'none', cursor: 'pointer',
+                color: '#94a3b8', fontSize: '24px', padding: 0, lineHeight: 1, flexShrink: 0,
+              }}>×</button>
+            </div>
+          </div>
+
+          {/* JD textarea */}
+          <div style={{ padding: '10px 20px', borderBottom: '1px solid #e2e8f0', flexShrink: 0 }}>
+            <textarea value={jd} onChange={e => setJd(e.target.value)}
+              placeholder="Paste job description here for better results…"
+              rows={3}
+              style={{
+                width: '100%', padding: '8px 12px', borderRadius: '8px',
+                border: '1px solid #e2e8f0', fontSize: '12px',
+                resize: 'vertical', fontFamily: 'inherit', outline: 'none',
+                color: '#374151', lineHeight: 1.5, minHeight: '68px', maxHeight: '160px',
+                background: '#fafafa',
+              }}
+            />
+          </div>
+
+          {/* Quick chips */}
+          <div style={{ padding: '9px 20px', borderBottom: '1px solid #e2e8f0', flexShrink: 0, display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+            {JOB_CHIPS.map(chip => (
+              <button key={chip} type="button" onClick={() => sendMessage(chip)} disabled={loading}
+                style={{
+                  padding: '5px 12px', borderRadius: '16px', border: '1px solid #e2e8f0',
+                  background: '#f8fafc', color: '#475569', fontSize: '12px',
+                  cursor: loading ? 'default' : 'pointer', opacity: loading ? 0.5 : 1,
+                  whiteSpace: 'nowrap', fontWeight: 500,
+                }}>
+                {chip}
+              </button>
+            ))}
+          </div>
+
+          {/* Messages */}
+          <div style={{ flex: 1, overflowY: 'auto', padding: '14px 20px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            {messages.length === 0 && !loading && (
+              <div style={{ color: '#94a3b8', fontSize: '13px', textAlign: 'center', marginTop: '32px', lineHeight: 1.7 }}>
+                Paste a JD above, tap a chip,<br />or type your question below.
+              </div>
+            )}
+            {messages.map((msg, i) => (
+              <div key={i} style={{ display: 'flex', flexDirection: 'column', alignItems: msg.role === 'user' ? 'flex-end' : 'flex-start' }}>
+                <div style={{
+                  maxWidth: '92%', padding: '9px 13px', borderRadius: '12px',
+                  background: msg.role === 'user' ? '#0f172a' : '#f1f5f9',
+                  color: msg.role === 'user' ? '#f8fafc' : '#0f172a',
+                  fontSize: '13px',
+                }}>
+                  {msg.role === 'user'
+                    ? <span style={{ whiteSpace: 'pre-wrap', lineHeight: 1.55 }}>{msg.content}</span>
+                    : <div className="md-content" dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(window.marked.parse(msg.content)) }} />
+                  }
+                </div>
+                {msg.role === 'assistant' && msg.pdf && (
+                  <CopyButton content={msg.content} />
+                )}
+              </div>
+            ))}
+            {loading && (
+              <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
+                <div style={{ padding: '9px 13px', borderRadius: '12px', background: '#f1f5f9', color: '#64748b', fontSize: '13px' }}>
+                  Thinking…
+                </div>
+              </div>
+            )}
+            <div ref={bottomRef} />
+          </div>
+
+          {/* Input */}
+          <div style={{ padding: '12px 20px', borderTop: '1px solid #e2e8f0', display: 'flex', gap: '8px', flexShrink: 0 }}>
+            <input type="text" value={input}
+              onChange={e => setInput(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(input); } }}
+              placeholder="Ask about this role…"
+              disabled={loading}
+              style={{
+                flex: 1, padding: '9px 13px', borderRadius: '8px',
+                border: '1px solid #d1d5db', fontSize: '13px', outline: 'none',
+              }}
+            />
+            <button type="button" onClick={() => sendMessage(input)}
+              disabled={loading || !input.trim()}
+              style={{
+                padding: '9px 16px', borderRadius: '8px', border: 'none',
+                background: '#0f172a', color: '#f8fafc', fontSize: '13px',
+                cursor: loading || !input.trim() ? 'not-allowed' : 'pointer',
+                opacity: loading || !input.trim() ? 0.5 : 1,
+              }}>
+              Send
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    // ── App ───────────────────────────────────────────────────
+    function App() {
+      const [accessCode, setAccessCode] = useState(() => localStorage.getItem('jobAgentCode'));
+      const [page, setPage] = useState('setup');  // 'setup' | 'results' | 'view'
+      const [scanConfig, setScanConfig] = useState(null);
+      const [profile, setProfile] = useState(null);
+      const [hasLastRun, setHasLastRun] = useState(false);
+
+      // Clear gate when the server rejects our stored code.
+      useEffect(() => {
+        const handler = () => setAccessCode(null);
+        window.addEventListener('auth-clear', handler);
+        return () => window.removeEventListener('auth-clear', handler);
+      }, []);
+
+      useEffect(() => {
+        if (accessCode === null) return;
+        fetch('/api/results')
+          .then(r => r.json())
+          .then(d => setHasLastRun((d.results || []).length > 0))
+          .catch(() => {});
+      }, [accessCode]);
+
+      if (accessCode === null) {
+        return <AccessGate onAuth={code => setAccessCode(code)} />;
+      }
+
+      if (page === 'results') {
+        return <ResultsPage scanConfig={scanConfig} profile={profile}
+          onBack={() => setPage('setup')} />;
+      }
+      if (page === 'view') {
+        return <ViewResultsPage onBack={() => setPage('setup')} />;
+      }
+      return (
+        <SetupPage
+          hasLastRun={hasLastRun}
+          onViewLast={() => setPage('view')}
+          onScanStart={(cfg, prof) => {
+            setScanConfig(cfg);
+            setProfile(prof);
+            setPage('results');
+          }}
+        />
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

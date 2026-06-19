@@ -1,0 +1,35 @@
+# Secrets & credentials
+.env
+.claude/
+
+# User data & runtime output
+uploads/
+last_run.json
+pending_candidates.json
+score_cache.json
+daily_digest.md
+last_notified.json
+last_resume_text.txt
+
+# Personal files — resume, docs, screenshots
+Xinying Tu resume.pdf
+Xinying Tu resume.txt
+test_finance_resume.pdf
+screenshots/
+vibe_coding_workflow.pdf
+Job agent.docx
+workflow.jpg
+code-change-workflow.md
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Logs
+*.log
+
+# OS / editor noise
+.DS_Store
+~$*

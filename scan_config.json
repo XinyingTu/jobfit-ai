@@ -1,0 +1,19 @@
+{
+  "scan": {
+    "role": "Software Engineer",
+    "sources": "tech-intern,finance-intern",
+    "threshold": 70,
+    "location": "",
+    "work_model": "",
+    "resume_pdf": "Xinying Tu resume.pdf"
+  },
+  "notify": {
+    "enabled": true,
+    "smtp_host": "smtp.gmail.com",
+    "smtp_port": 587,
+    "smtp_user": "xinyingtu0708@gmail.com",
+    "from_addr": "xinyingtu0708@gmail.com",
+    "to_addr": "xinyingtu@outlook.com",
+    "min_score": 70
+  }
+}
