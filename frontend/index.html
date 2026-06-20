@@ -39,17 +39,6 @@
       font-size: 13px;
     }
     .header-back:hover { border-color: #94a3b8; color: #f8fafc; }
-    .header-schedule {
-      background: rgba(251,191,36,0.08);
-      color: #fbbf24;
-      border: 1px solid rgba(120,53,15,0.5);
-      padding: 6px 14px;
-      border-radius: 6px;
-      font-size: 13px;
-      font-weight: 500;
-      cursor: pointer;
-    }
-    .header-schedule:hover { border-color: #fbbf24; color: #fde68a; background: rgba(251,191,36,0.14); }
 
     /* ── Layout ── */
     .page { max-width: 860px; margin: 0 auto; padding: 40px 24px; transition: margin-right 0.22s ease, max-width 0.22s ease; }
@@ -379,48 +368,6 @@
       font-weight: 600;
     }
 
-    /* ── Schedule modal ── */
-    .modal-backdrop {
-      position: fixed; inset: 0; background: rgba(0,0,0,0.45);
-      z-index: 200; display: flex; align-items: center; justify-content: center;
-      padding: 16px;
-    }
-    .modal-box {
-      background: #fff; border-radius: 16px; padding: 28px 32px;
-      width: 100%; max-width: 400px;
-      box-shadow: 0 20px 60px rgba(0,0,0,0.18);
-    }
-    .modal-header {
-      display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px;
-    }
-    .modal-title { font-size: 16px; font-weight: 700; color: #0f172a; }
-    .modal-close {
-      background: none; border: none; cursor: pointer;
-      color: #94a3b8; font-size: 22px; line-height: 1; padding: 0;
-    }
-    .modal-close:hover { color: #0f172a; }
-    .toggle-row {
-      display: flex; align-items: center; justify-content: space-between;
-      padding: 12px 0; border-bottom: 1px solid #f1f5f9; margin-bottom: 16px;
-    }
-    .toggle-label { font-size: 14px; font-weight: 500; color: #374151; }
-    .toggle-track {
-      width: 44px; height: 24px; border-radius: 12px; cursor: pointer;
-      position: relative; transition: background 0.2s; border: none; padding: 0;
-    }
-    .toggle-thumb {
-      position: absolute; top: 3px; width: 18px; height: 18px;
-      border-radius: 50%; background: #fff;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.2); transition: left 0.2s;
-    }
-    .btn-schedule-save {
-      width: 100%; padding: 11px; border-radius: 9px; border: none;
-      background: #0f172a; color: #fff; font-size: 14px; font-weight: 600;
-      cursor: pointer; margin-top: 20px; transition: background 0.15s;
-    }
-    .btn-schedule-save:hover:not(:disabled) { background: #1e293b; }
-    .btn-schedule-save:disabled { background: #94a3b8; cursor: not-allowed; }
-
     /* ── Markdown render inside sidebar ── */
     .md-content { font-size: 13px; line-height: 1.6; color: #0f172a; }
     .md-content h1 { font-size: 16px; font-weight: 700; margin: 14px 0 6px; }
@@ -584,135 +531,6 @@
       'finance-intern': ['Quant', 'Trading', 'Fin Eng', 'Risk', 'Investment Banking Tech'],
     };
 
-    // ── ScheduleModal ─────────────────────────────────────────
-    function ScheduleModal({ onClose }) {
-      const [scheduled, setScheduled] = useState(false);
-      const [hour, setHour] = useState(9);
-      const [minute, setMinute] = useState(0);
-      const [toAddr, setToAddr] = useState('');
-      const [saving, setSaving] = useState(false);
-      const [saved, setSaved] = useState(false);
-      const [error, setError] = useState(null);
-
-      useEffect(() => {
-        fetch('/api/email-schedule')
-          .then(r => r.json())
-          .then(d => {
-            setScheduled(d.scheduled);
-            setHour(d.hour ?? 9);
-            setMinute(d.minute ?? 0);
-            setToAddr(d.to_addr || '');
-          })
-          .catch(() => {});
-      }, []);
-
-      async function handleSave() {
-        setSaving(true);
-        setError(null);
-        setSaved(false);
-        try {
-          const res = await fetch('/api/email-schedule', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ scheduled, hour, minute }),
-          });
-          const data = await res.json();
-          if (!res.ok) { setError(data.error || 'Failed to save schedule.'); return; }
-          setSaved(true);
-          setTimeout(() => setSaved(false), 2500);
-        } catch (e) {
-          setError('Could not reach the server.');
-        } finally {
-          setSaving(false);
-        }
-      }
-
-      const padMin = String(minute).padStart(2, '0');
-      const displayTime = `${String(hour).padStart(2, '0')}:${padMin}`;
-
-      return (
-        <div className="modal-backdrop" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
-          <div className="modal-box">
-            <div className="modal-header">
-              <div className="modal-title">Daily Email Reminder</div>
-              <button className="modal-close" onClick={onClose}>×</button>
-            </div>
-
-            {toAddr && (
-              <div style={{ fontSize: '13px', color: '#64748b', marginBottom: '16px' }}>
-                Sends digest to <strong style={{ color: '#0f172a' }}>{toAddr}</strong>
-              </div>
-            )}
-
-            <div className="toggle-row">
-              <span className="toggle-label">Schedule daily email</span>
-              <button
-                className="toggle-track"
-                style={{ background: scheduled ? '#3b82f6' : '#cbd5e1' }}
-                onClick={() => setScheduled(s => !s)}
-              >
-                <span className="toggle-thumb" style={{ left: scheduled ? '23px' : '3px' }} />
-              </button>
-            </div>
-
-            {scheduled && (
-              <div className="field">
-                <label style={{ fontSize: '13px', fontWeight: 500, color: '#374151', display: 'block', marginBottom: '8px' }}>
-                  Send at (24-hour)
-                </label>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                  <select value={hour} onChange={e => setHour(Number(e.target.value))}
-                    style={{
-                      padding: '8px 10px', border: '1px solid #d1d5db', borderRadius: '8px',
-                      fontSize: '15px', fontWeight: 600, color: '#0f172a', width: '80px',
-                    }}>
-                    {Array.from({length: 24}, (_, i) => (
-                      <option key={i} value={i}>{String(i).padStart(2, '0')}</option>
-                    ))}
-                  </select>
-                  <span style={{ fontSize: '18px', fontWeight: 700, color: '#94a3b8' }}>:</span>
-                  <select value={minute} onChange={e => setMinute(Number(e.target.value))}
-                    style={{
-                      padding: '8px 10px', border: '1px solid #d1d5db', borderRadius: '8px',
-                      fontSize: '15px', fontWeight: 600, color: '#0f172a', width: '80px',
-                    }}>
-                    {[0, 15, 30, 45].map(m => (
-                      <option key={m} value={m}>{String(m).padStart(2, '0')}</option>
-                    ))}
-                  </select>
-                  <span style={{ fontSize: '13px', color: '#64748b' }}>daily</span>
-                </div>
-              </div>
-            )}
-
-            {!scheduled && (
-              <p style={{ fontSize: '13px', color: '#94a3b8', marginTop: '4px' }}>
-                No daily email scheduled. Toggle on to set a time.
-              </p>
-            )}
-
-            {error && (
-              <div className="error-msg" style={{ marginTop: '14px' }}>⚠️ {error}</div>
-            )}
-
-            {saved && (
-              <div style={{
-                marginTop: '14px', padding: '10px 14px', borderRadius: '8px',
-                background: '#f0fdf4', border: '1px solid #bbf7d0',
-                color: '#15803d', fontSize: '13px', fontWeight: 500,
-              }}>
-                ✓ {scheduled ? `Scheduled — daily at ${displayTime}` : 'Schedule removed'}
-              </div>
-            )}
-
-            <button className="btn-schedule-save" onClick={handleSave} disabled={saving}>
-              {saving ? 'Saving…' : 'Save Schedule'}
-            </button>
-          </div>
-        </div>
-      );
-    }
-
     // ── SetupPage ─────────────────────────────────────────────
     function SetupPage({ onScanStart, onViewLast, hasLastRun }) {
       const [name, setName] = useState('');
@@ -724,7 +542,6 @@
       const [resumeFile, setResumeFile] = useState(null);
       const [loading, setLoading] = useState(false);
       const [error, setError] = useState(null);
-      const [showSchedule, setShowSchedule] = useState(false);
       const [directionTags, setDirectionTags] = useState(() => {
         try {
           const saved = localStorage.getItem('jobDirectionTags');
@@ -794,13 +611,9 @@
 
       return (
         <>
-          {showSchedule && <ScheduleModal onClose={() => setShowSchedule(false)} />}
           <div className="header">
             <div className="header-logo">Job<span>Fit</span></div>
             <div style={{ display: 'flex', gap: '8px' }}>
-              <button className="header-schedule" onClick={() => setShowSchedule(true)}>
-                📅 Daily Email Alerts
-              </button>
               {hasLastRun && (
                 <button className="header-back" onClick={onViewLast}>View Last Results</button>
               )}

@@ -15,6 +15,8 @@ import anthropic
 import typer
 from playwright.async_api import async_playwright
 
+import claude_budget
+
 app = typer.Typer(
     name="job-agent",
     help="Super Scanner: scrape jobs, score against your resume, write daily_digest.md.",
@@ -245,6 +247,7 @@ def _parse_resume_pdf(client: anthropic.Anthropic, pdf_path: Path) -> tuple[dict
     Returns (profile_dict, resume_text).
     """
     pdf_b64 = base64.standard_b64encode(pdf_path.read_bytes()).decode("utf-8")
+    claude_budget.check()  # raises ClaudeBudgetExceeded if the daily cap is hit
     response = client.messages.create(
         model="claude-haiku-4-5-20251001",
         max_tokens=2000,
@@ -276,6 +279,7 @@ def _parse_resume_pdf(client: anthropic.Anthropic, pdf_path: Path) -> tuple[dict
             ],
         }],
     )
+    claude_budget.record()  # count only after a successful call
     result = _extract_json(response.content[0].text)
     return result["profile"], result["text"]
 
@@ -937,6 +941,7 @@ def _score_match(
     system_prompt: str,
 ) -> dict:
     """Score how well the resume fits the job. Returns dict with fit_score, preference_score, reasons, priority."""
+    claude_budget.check()  # raises ClaudeBudgetExceeded if the daily cap is hit
     response = client.messages.create(
         model="claude-sonnet-4-6",
         max_tokens=300,
@@ -963,6 +968,7 @@ def _score_match(
             }
         ],
     )
+    claude_budget.record()  # count only after a successful call
     parsed = _extract_json(response.content[0].text)
     fit_score        = min(10, max(0, int(parsed["fit_score"])))
     preference_score = min(10, max(0, int(parsed["preference_score"])))
@@ -1227,6 +1233,9 @@ async def _scan_pipeline(
     typer.echo(f"[*] Parsing resume PDF: {resume_pdf.name}…", err=True)
     try:
         profile, resume_text = _parse_resume_pdf(client, resume_pdf)
+    except claude_budget.ClaudeBudgetExceeded:
+        typer.echo("[!] Daily Claude quota reached — try again tomorrow.", err=True)
+        raise typer.Exit(1)
     except Exception as e:
         typer.echo(f"[!] Failed to parse resume PDF: {e}", err=True)
         raise typer.Exit(1)
@@ -1420,6 +1429,9 @@ async def _scan_pipeline(
         # Claude scoring
         try:
             scored = _score_match(client, title, jd, resume_text, scoring_prompt)
+        except claude_budget.ClaudeBudgetExceeded:
+            typer.echo("  [Stop] Daily Claude quota reached — stopping scan.\n", err=True)
+            break
         except Exception as e:
             typer.echo(f"  [Skip] Scoring error: {e}\n", err=True)
             record["action"] = "skipped_scoring_error"
@@ -1537,6 +1549,9 @@ async def _score_more_pipeline() -> None:
     typer.echo(f"[*] Parsing resume PDF: {resume_pdf.name}…", err=True)
     try:
         profile, resume_text = _parse_resume_pdf(client, resume_pdf)
+    except claude_budget.ClaudeBudgetExceeded:
+        typer.echo("[!] Daily Claude quota reached — try again tomorrow.", err=True)
+        raise typer.Exit(1)
     except Exception as e:
         typer.echo(f"[!] Failed to parse resume: {e}", err=True)
         raise typer.Exit(1)
@@ -1637,6 +1652,9 @@ async def _score_more_pipeline() -> None:
 
         try:
             scored = _score_match(client, title, jd, resume_text, scoring_prompt)
+        except claude_budget.ClaudeBudgetExceeded:
+            typer.echo("  [Stop] Daily Claude quota reached — stopping.\n", err=True)
+            break
         except Exception as e:
             typer.echo(f"  [Skip] Scoring error: {e}\n", err=True)
             record["action"] = "skipped_scoring_error"

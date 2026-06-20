@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
 """FastAPI server — exposes scan API and serves the React frontend."""
 
+import hmac
 import json
 import os
 import subprocess
 import sys
 import threading
-import time
 import uuid
-from collections import deque
 from pathlib import Path
 from typing import Optional
 
@@ -32,20 +31,18 @@ def _load_dotenv() -> None:
 _load_dotenv()
 
 import anthropic
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+
+import claude_budget
 
 UPLOAD_DIR = Path("uploads")
 UPLOAD_DIR.mkdir(exist_ok=True)
 MAX_PDF_BYTES = 10 * 1024 * 1024  # 10 MB
 
 app = FastAPI(title="Job Agent API")
-
-_CLAUDE_CALLS: deque = deque()
-_DAILY_CLAUDE_LIMIT = int(os.environ.get("DAILY_CLAUDE_CALL_LIMIT", "80"))
-_CLAUDE_WINDOW = 86400  # 24-hour sliding window in seconds
 
 _VALID_DIRECTION_TAGS: set = {
     # tech-intern
@@ -54,14 +51,30 @@ _VALID_DIRECTION_TAGS: set = {
     "Quant", "Trading", "Fin Eng", "Risk", "Investment Banking Tech",
 }
 
+# Admin token for crontab-mutating endpoints. Read from .env; never sent to the
+# frontend. If unset, the admin endpoints are disabled rather than left open.
+_ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "")
 
-def _check_claude_global() -> None:
-    now = time.monotonic()
-    while _CLAUDE_CALLS and now - _CLAUDE_CALLS[0] > _CLAUDE_WINDOW:
-        _CLAUDE_CALLS.popleft()
-    if len(_CLAUDE_CALLS) >= _DAILY_CLAUDE_LIMIT:
-        raise HTTPException(status_code=503, detail="Today's quota is full. Please try tomorrow!")
-    _CLAUDE_CALLS.append(now)
+
+def _check_claude_quota() -> None:
+    """Raise 503 if the shared daily Claude-call budget is exhausted."""
+    try:
+        claude_budget.check()
+    except claude_budget.ClaudeBudgetExceeded:
+        raise HTTPException(
+            status_code=503, detail="Today's quota is full. Please try tomorrow!"
+        )
+
+
+def _require_admin(token: Optional[str]) -> None:
+    """Gate an endpoint behind the X-Admin-Token header (constant-time compare)."""
+    if not _ADMIN_TOKEN:
+        raise HTTPException(
+            status_code=503,
+            detail="Admin endpoint disabled: ADMIN_TOKEN is not configured.",
+        )
+    if not token or not hmac.compare_digest(token, _ADMIN_TOKEN):
+        raise HTTPException(status_code=401, detail="Invalid or missing admin token.")
 
 
 _state: dict = {"running": False, "lines": [], "error": None, "done": True, "proc": None}
@@ -112,6 +125,11 @@ async def start_scan(
     with _lock:
         if _state["running"]:
             return JSONResponse({"error": "A scan is already running."}, status_code=409)
+
+    # Refuse before doing any work if the shared daily Claude budget is already
+    # full. Per-call enforcement (resume parse + each scoring call) happens in
+    # main.py so the run also stops mid-scan when the cap is hit.
+    _check_claude_quota()
 
     content = await resume_pdf.read(MAX_PDF_BYTES + 1)
     if len(content) > MAX_PDF_BYTES:
@@ -183,6 +201,10 @@ def reset_state():
 @app.post("/api/score-more")
 def score_more():
     """Score the next batch of pending candidates from the last scan."""
+    # Refuse before starting if the shared daily Claude budget is already full;
+    # per-call enforcement continues inside main.py for mid-run cutoff.
+    _check_claude_quota()
+
     with _lock:
         if _state["running"]:
             return JSONResponse({"error": "A scan is already running."}, status_code=409)
@@ -209,7 +231,7 @@ class _JobChatReq(BaseModel):
 
 @app.post("/api/chat")
 async def chat(req: _ChatReq):
-    _check_claude_global()
+    _check_claude_quota()
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
         return JSONResponse({"error": "ANTHROPIC_API_KEY not set."}, status_code=500)
@@ -251,12 +273,13 @@ async def chat(req: _ChatReq):
         system=system,
         messages=[{"role": m.role, "content": m.content} for m in req.messages],
     )
+    claude_budget.record()
     return {"reply": resp.content[0].text}
 
 
 @app.post("/api/chat-job")
 async def chat_job(req: _JobChatReq):
-    _check_claude_global()
+    _check_claude_quota()
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
         return JSONResponse({"error": "ANTHROPIC_API_KEY not set."}, status_code=500)
@@ -295,6 +318,7 @@ async def chat_job(req: _JobChatReq):
         system=system,
         messages=[{"role": m.role, "content": m.content} for m in req.messages],
     )
+    claude_budget.record()
     return {"reply": resp.content[0].text}
 
 
@@ -324,8 +348,9 @@ class _ScheduleReq(BaseModel):
 
 
 @app.get("/api/email-schedule")
-def get_email_schedule():
-    """Return current daily scan crontab state and email recipient."""
+def get_email_schedule(x_admin_token: Optional[str] = Header(None)):
+    """Return current daily scan crontab state and email recipient (admin only)."""
+    _require_admin(x_admin_token)
     result = subprocess.run(["crontab", "-l"], capture_output=True, text=True)
     scheduled = False
     hour, minute = 9, 0
@@ -352,8 +377,9 @@ def get_email_schedule():
 
 
 @app.post("/api/email-schedule")
-def set_email_schedule(req: _ScheduleReq):
-    """Add, update, or remove the daily scan crontab entry."""
+def set_email_schedule(req: _ScheduleReq, x_admin_token: Optional[str] = Header(None)):
+    """Add, update, or remove the daily scan crontab entry (admin only)."""
+    _require_admin(x_admin_token)
     result = subprocess.run(["crontab", "-l"], capture_output=True, text=True)
     existing_lines = result.stdout.splitlines() if result.returncode == 0 else []
 
