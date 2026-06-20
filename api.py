@@ -8,7 +8,7 @@ import sys
 import threading
 import time
 import uuid
-from collections import defaultdict, deque
+from collections import deque
 from pathlib import Path
 from typing import Optional
 
@@ -32,7 +32,7 @@ def _load_dotenv() -> None:
 _load_dotenv()
 
 import anthropic
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -43,26 +43,25 @@ MAX_PDF_BYTES = 10 * 1024 * 1024  # 10 MB
 
 app = FastAPI(title="Job Agent API")
 
-_ACCESS_CODE = os.environ.get("APP_ACCESS_CODE", "")
-_rate_buckets: dict = defaultdict(deque)
-_RATE_WINDOW = 60   # seconds
-_RATE_LIMIT   = 30  # requests per IP per window
+_CLAUDE_CALLS: deque = deque()
+_DAILY_CLAUDE_LIMIT = int(os.environ.get("DAILY_CLAUDE_CALL_LIMIT", "80"))
+_CLAUDE_WINDOW = 86400  # 24-hour sliding window in seconds
+
+_VALID_DIRECTION_TAGS: set = {
+    # tech-intern
+    "AI/ML", "Frontend", "Backend", "Fullstack", "Data", "DevOps", "Mobile", "Security",
+    # finance-intern
+    "Quant", "Trading", "Fin Eng", "Risk", "Investment Banking Tech",
+}
 
 
-def _check_access(
-    request: Request,
-    x_access_code: Optional[str] = Header(None),
-) -> None:
-    if _ACCESS_CODE and x_access_code != _ACCESS_CODE:
-        raise HTTPException(status_code=401, detail="Invalid access code.")
-    ip = request.client.host if request.client else "unknown"
+def _check_claude_global() -> None:
     now = time.monotonic()
-    bucket = _rate_buckets[ip]
-    while bucket and now - bucket[0] > _RATE_WINDOW:
-        bucket.popleft()
-    if len(bucket) >= _RATE_LIMIT:
-        raise HTTPException(status_code=429, detail="Rate limit exceeded. Try again later.")
-    bucket.append(now)
+    while _CLAUDE_CALLS and now - _CLAUDE_CALLS[0] > _CLAUDE_WINDOW:
+        _CLAUDE_CALLS.popleft()
+    if len(_CLAUDE_CALLS) >= _DAILY_CLAUDE_LIMIT:
+        raise HTTPException(status_code=503, detail="Today's quota is full. Please try tomorrow!")
+    _CLAUDE_CALLS.append(now)
 
 
 _state: dict = {"running": False, "lines": [], "error": None, "done": True, "proc": None}
@@ -100,7 +99,7 @@ def _run(cmd: list) -> None:
             _state["proc"] = None
 
 
-@app.post("/api/scan", dependencies=[Depends(_check_access)])
+@app.post("/api/scan")
 async def start_scan(
     resume_pdf: UploadFile = File(...),
     role: str = Form("Software Engineer"),
@@ -108,6 +107,7 @@ async def start_scan(
     threshold: int = Form(70),
     location: str = Form(""),
     work_model: str = Form(""),
+    direction_tags: str = Form(""),
 ):
     with _lock:
         if _state["running"]:
@@ -133,6 +133,16 @@ async def start_scan(
         cmd += ["--location", location.strip()]
     if work_model.strip():
         cmd += ["--work-model", work_model.strip()]
+
+    try:
+        raw_tags = json.loads(direction_tags) if direction_tags.strip() else []
+        if not isinstance(raw_tags, list):
+            raw_tags = []
+    except (json.JSONDecodeError, ValueError):
+        raw_tags = []
+    valid_tags = [t for t in raw_tags if isinstance(t, str) and t in _VALID_DIRECTION_TAGS]
+    if valid_tags:
+        cmd += ["--direction-tags", json.dumps(valid_tags)]
 
     with _lock:
         _state.update({"running": True, "lines": [], "error": None, "done": False})
@@ -170,7 +180,7 @@ def reset_state():
     return {"status": "reset"}
 
 
-@app.post("/api/score-more", dependencies=[Depends(_check_access)])
+@app.post("/api/score-more")
 def score_more():
     """Score the next batch of pending candidates from the last scan."""
     with _lock:
@@ -197,8 +207,9 @@ class _JobChatReq(BaseModel):
     company: str = ""
     jd: str = ""
 
-@app.post("/api/chat", dependencies=[Depends(_check_access)])
+@app.post("/api/chat")
 async def chat(req: _ChatReq):
+    _check_claude_global()
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
         return JSONResponse({"error": "ANTHROPIC_API_KEY not set."}, status_code=500)
@@ -243,8 +254,9 @@ async def chat(req: _ChatReq):
     return {"reply": resp.content[0].text}
 
 
-@app.post("/api/chat-job", dependencies=[Depends(_check_access)])
+@app.post("/api/chat-job")
 async def chat_job(req: _JobChatReq):
+    _check_claude_global()
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
         return JSONResponse({"error": "ANTHROPIC_API_KEY not set."}, status_code=500)
@@ -286,7 +298,7 @@ async def chat_job(req: _JobChatReq):
     return {"reply": resp.content[0].text}
 
 
-@app.get("/api/resume-text", dependencies=[Depends(_check_access)])
+@app.get("/api/resume-text")
 def get_resume_text():
     p = Path("last_resume_text.txt")
     return {"text": p.read_text(encoding="utf-8") if p.exists() else ""}
@@ -311,7 +323,7 @@ class _ScheduleReq(BaseModel):
     minute: int = 0
 
 
-@app.get("/api/email-schedule", dependencies=[Depends(_check_access)])
+@app.get("/api/email-schedule")
 def get_email_schedule():
     """Return current daily scan crontab state and email recipient."""
     result = subprocess.run(["crontab", "-l"], capture_output=True, text=True)
@@ -339,7 +351,7 @@ def get_email_schedule():
     return {"scheduled": scheduled, "hour": hour, "minute": minute, "to_addr": to_addr}
 
 
-@app.post("/api/email-schedule", dependencies=[Depends(_check_access)])
+@app.post("/api/email-schedule")
 def set_email_schedule(req: _ScheduleReq):
     """Add, update, or remove the daily scan crontab entry."""
     result = subprocess.run(["crontab", "-l"], capture_output=True, text=True)

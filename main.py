@@ -199,35 +199,33 @@ _EXPERIENCE_GATE = re.compile(
 )
 
 _SCORING_PROMPT_TEMPLATE = """\
-You are a job-match evaluator. Given a job title, job description, and a candidate's resume, \
-produce a match score using the following rules:
+You are a job-match evaluator. Score a job against a candidate on TWO independent dimensions.
 
 {{CANDIDATE_PROFILE}}
 
-SCORING RULES:
-1. Start with a RAW FIT score (0-100) based on how well the candidate's skills, \
-   coursework, and experience (listed in CANDIDATE PROFILE above) align with the \
-   stated role requirements.
-2. TECHNICAL PRIORITY BONUS (+15): If the job title or description prominently features \
-   any of these — "Software Engineer", "Backend", "Fullstack", "AI Engineer", or \
-   "Machine Learning" — add 15 points. Also weight positively any alignment with \
-   the candidate's specific skills and experience listed above.
-3. ACADEMIC BASELINE BONUS (+20): If the candidate's GPA (shown above) is strong \
-   (e.g. 3.5+/4.0, 85%+/100, or equivalent), apply a flat +20 to reflect strong \
-   CS fundamentals that transfer across roles.
-4. Final score = min(100, raw_fit + applicable_bonuses). Never exceed 100.
-5. For Product or UI/UX roles, apply the academic bonus but NOT the technical priority bonus.
-6. STUDENT-FRIENDLY BOOST (+5): If the role is explicitly an internship, co-op, part-time, \
-   new-grad, entry-level, or junior position, add 5 points to reward roles suited to the candidate's stage.
-7. EXPERIENCE PENALTY: If the role explicitly requires 3 or more years of professional experience \
-   and is NOT tagged as intern/entry-level, reduce the raw fit score by 15 before applying bonuses. \
-   The candidate is a current student with limited industry experience — hard experience gates are a \
-   significant mismatch.
+DIMENSION 1 — FIT SCORE (0-10): How well does the candidate meet the job's hard requirements?
+1. Start with a raw fit (0-6) based on how the candidate's skills, coursework, and experience \
+   align with the JD's stated requirements.
+2. TECHNICAL PRIORITY BONUS (+1.5): If the job title or description prominently features \
+   "Backend", "Fullstack", "AI Engineer", or "Machine Learning", add 1.5.
+3. ACADEMIC BASELINE BONUS (+2): If the candidate's GPA is strong (3.5+/4.0, 85%+/100, or \
+   equivalent), add 2 to reflect strong CS fundamentals that transfer across roles.
+4. STUDENT-FRIENDLY BOOST (+0.5): If the role is explicitly internship, co-op, new-grad, \
+   entry-level, or junior, add 0.5.
+5. EXPERIENCE PENALTY (-1.5): If the role requires 3+ years of professional experience and \
+   is NOT tagged intern/entry-level, subtract 1.5 from the raw fit before applying bonuses.
+6. For Product or UI/UX roles, apply the academic bonus but NOT the technical priority bonus.
+7. Clamp final fit_score to [0, 10].
+
+DIMENSION 2 — PREFERENCE SCORE (0-10): How well does this job match the candidate's direction preferences?
+{{DIRECTION_SECTION}}
 
 OUTPUT FORMAT — return ONLY valid JSON, no markdown fences, no extra keys:
 {
-  "score": <integer 0-100>,
-  "reason": "<one concise sentence explaining the score>",
+  "fit_score": <integer 0-10>,
+  "fit_reason": "<one concise sentence: which hard requirements match or mismatch the resume>",
+  "preference_score": <integer 0-10>,
+  "preference_reason": "<one concise sentence: how this job aligns with the candidate's stated preferences>",
   "priority": <"AI/SWE" if technical priority bonus was applied, else null>
 }"""
 
@@ -282,10 +280,11 @@ def _parse_resume_pdf(client: anthropic.Anthropic, pdf_path: Path) -> tuple[dict
     return result["profile"], result["text"]
 
 
-def _build_scoring_prompt(profile: dict) -> str:
+def _build_scoring_prompt(profile: dict, direction_tags: Optional[list] = None) -> str:
     """Build the scoring system prompt with the candidate profile injected from the parsed PDF."""
     skills = ", ".join(profile.get("skills") or []) or "Not specified"
     exp_lines = "\n".join(f"  - {e}" for e in (profile.get("experience") or [])) or "  - Not specified"
+    looking_for = profile.get("looking_for", "Software Engineering roles")
     candidate_section = (
         "CANDIDATE PROFILE:\n"
         f"- Name: {profile.get('name', 'Unknown')}\n"
@@ -293,9 +292,31 @@ def _build_scoring_prompt(profile: dict) -> str:
         f"- GPA: {profile.get('gpa', 'Not specified')}\n"
         f"- Skills: {skills}\n"
         f"- Experience / Projects:\n{exp_lines}\n"
-        f"- Looking for: {profile.get('looking_for', 'Software Engineering roles')}"
+        f"- Looking for: {looking_for}"
     )
-    return _SCORING_PROMPT_TEMPLATE.replace("{{CANDIDATE_PROFILE}}", candidate_section)
+    if direction_tags:
+        tags_str = ", ".join(direction_tags)
+        direction_section = (
+            f"The candidate prefers jobs in these directions: [{tags_str}].\n"
+            "Score 9-10: job title/description clearly matches one of these directions.\n"
+            "Score 6-8: related to the preferred directions but not an exact match.\n"
+            "Score 3-5: neutral — different area but not a clear conflict.\n"
+            "Score 0-2: clearly conflicts with or is very different from the stated preferences.\n"
+            f"General role preference (additional context): {looking_for}."
+        )
+    else:
+        direction_section = (
+            f"No direction preferences selected. Score based on the candidate's general role preference: {looking_for}.\n"
+            "Score 9-10: job matches the stated preference exactly.\n"
+            "Score 6-8: related but not the primary preference.\n"
+            "Score 3-5: adjacent area with some relevance.\n"
+            "Score 0-2: clearly different from the stated preferences."
+        )
+    return (
+        _SCORING_PROMPT_TEMPLATE
+        .replace("{{CANDIDATE_PROFILE}}", candidate_section)
+        .replace("{{DIRECTION_SECTION}}", direction_section)
+    )
 
 
 @app.callback()
@@ -914,11 +935,11 @@ def _score_match(
     jd: str,
     resume: str,
     system_prompt: str,
-) -> tuple[int, str, Optional[str]]:
-    """Score how well the resume fits the job. Returns (score, reason, priority_tag)."""
+) -> dict:
+    """Score how well the resume fits the job. Returns dict with fit_score, preference_score, reasons, priority."""
     response = client.messages.create(
         model="claude-sonnet-4-6",
-        max_tokens=256,
+        max_tokens=300,
         system=[
             {
                 "type": "text",
@@ -943,7 +964,19 @@ def _score_match(
         ],
     )
     parsed = _extract_json(response.content[0].text)
-    return int(parsed["score"]), str(parsed["reason"]), parsed.get("priority")
+    fit_score        = min(10, max(0, int(parsed["fit_score"])))
+    preference_score = min(10, max(0, int(parsed["preference_score"])))
+    total            = min(100, (fit_score + preference_score) * 5)
+    fit_reason       = str(parsed.get("fit_reason", ""))
+    return {
+        "score":             total,
+        "fit_score":         fit_score,
+        "fit_reason":        fit_reason,
+        "preference_score":  preference_score,
+        "preference_reason": str(parsed.get("preference_reason", "")),
+        "reason":            fit_reason,  # kept for _write_digest compat
+        "priority":          parsed.get("priority"),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -1148,6 +1181,10 @@ def scan(
         str(RESUME_PDF), "--resume-pdf",
         help="Path to resume PDF (default: 'Xinying Tu resume.pdf')",
     ),
+    direction_tags: str = typer.Option(
+        "", "--direction-tags",
+        help='JSON array of direction tags, e.g. \'["AI/ML","Backend"]\'',
+    ),
 ):
     """
     Super Scanner: scrape Hanzilla → filter → score → write daily_digest.md.
@@ -1163,7 +1200,7 @@ def scan(
         python main.py scan --sources "swe-intern,data-intern" --work-model "Remote"
         python main.py scan --role "Financial Analyst" --location "Toronto"
     """
-    asyncio.run(_scan_pipeline(role, sources, threshold, location, work_model, Path(resume_pdf)))
+    asyncio.run(_scan_pipeline(role, sources, threshold, location, work_model, Path(resume_pdf), direction_tags))
 
 
 async def _scan_pipeline(
@@ -1173,6 +1210,7 @@ async def _scan_pipeline(
     location: str = "",
     work_model: str = "",
     resume_pdf: Path = RESUME_PDF,
+    direction_tags: str = "",
 ) -> None:
     # Preflight
     if not resume_pdf.exists():
@@ -1195,10 +1233,18 @@ async def _scan_pipeline(
     typer.echo(f"[✓] Profile: {profile.get('name')} | {profile.get('school')} | GPA {profile.get('gpa')}", err=True)
     typer.echo(f"    Skills: {', '.join(profile.get('skills') or [])}", err=True)
     Path("last_resume_text.txt").write_text(resume_text, encoding="utf-8")
-    scoring_prompt = _build_scoring_prompt(profile)
 
-    # Resume hash for cache invalidation
+    try:
+        dtags: list = json.loads(direction_tags) if direction_tags.strip() else []
+        if not isinstance(dtags, list):
+            dtags = []
+    except (json.JSONDecodeError, ValueError):
+        dtags = []
+    scoring_prompt = _build_scoring_prompt(profile, dtags)
+
+    # Resume hash + direction-tags hash for cache invalidation
     resume_hash = hashlib.md5(resume_pdf.read_bytes()).hexdigest()[:16]
+    tags_hash   = hashlib.md5(json.dumps(sorted(dtags)).encode()).hexdigest()[:8]
     cache = _load_cache()
     cache_hits = 0
 
@@ -1273,6 +1319,7 @@ async def _scan_pipeline(
                 "role": role, "threshold": threshold,
                 "location": location, "work_model": work_model,
                 "resume_pdf": str(resume_pdf),
+                "direction_tags": dtags,
                 "candidates": pending_candidates,
             }, indent=2, ensure_ascii=False),
             encoding="utf-8",
@@ -1298,16 +1345,20 @@ async def _scan_pipeline(
         typer.echo(f"[{i:02d}/{len(jobs):02d}] {title} @ {company}", err=True)
 
         record: dict = {
-            "job_title":    title,
-            "company_name": company,
-            "location":     job.get("location", ""),
-            "work_model":   job.get("work_model", ""),
-            "link":         url,
-            "source":       job.get("source", "hanzilla"),
-            "score":        None,
-            "reason":       None,
-            "priority":     None,
-            "action":       None,
+            "job_title":         title,
+            "company_name":      company,
+            "location":          job.get("location", ""),
+            "work_model":        job.get("work_model", ""),
+            "link":              url,
+            "source":            job.get("source", "hanzilla"),
+            "score":             None,
+            "fit_score":         None,
+            "fit_reason":        None,
+            "preference_score":  None,
+            "preference_reason": None,
+            "reason":            None,
+            "priority":          None,
+            "action":            None,
         }
 
         # Senior pre-filter
@@ -1318,12 +1369,10 @@ async def _scan_pipeline(
             continue
 
         # Check score cache before fetching JD
-        cached = cache.get(url)
+        cache_key = f"{url}|{resume_hash}|{tags_hash}"
+        cached = cache.get(cache_key)
         if cached and cached.get("resume_hash") == resume_hash:
-            score         = cached["score"]
-            reason        = cached["reason"]
-            priority      = cached.get("priority")
-            cached_wm     = cached.get("work_model", "")
+            cached_wm = cached.get("work_model", "")
             if cached_wm:
                 record["work_model"] = cached_wm
             if not _passes_combined_filter(cached_wm, job.get("location", ""), city, wm_set):
@@ -1332,12 +1381,18 @@ async def _scan_pipeline(
                 results.append(record)
                 continue
             cache_hits += 1
-            priority_tag = f" [{priority}]" if priority else ""
-            typer.echo(f"  [Cache] Score {score}/100{priority_tag} — {reason}\n", err=True)
-            record["score"]    = score
-            record["reason"]   = reason
-            record["priority"] = priority
-            record["action"]   = "qualifying" if score >= threshold else "scored_below_threshold"
+            priority_tag = f" [{cached.get('priority')}]" if cached.get("priority") else ""
+            typer.echo(f"  [Cache] Score {cached['score']}/100{priority_tag} — {cached.get('fit_reason','')}\n", err=True)
+            record.update({
+                "score":             cached["score"],
+                "fit_score":         cached.get("fit_score"),
+                "fit_reason":        cached.get("fit_reason", ""),
+                "preference_score":  cached.get("preference_score"),
+                "preference_reason": cached.get("preference_reason", ""),
+                "reason":            cached.get("reason", ""),
+                "priority":          cached.get("priority"),
+                "action":            "qualifying" if cached["score"] >= threshold else "scored_below_threshold",
+            })
             results.append(record)
             location_passed += 1
             continue
@@ -1364,28 +1419,43 @@ async def _scan_pipeline(
 
         # Claude scoring
         try:
-            score, reason, priority = _score_match(client, title, jd, resume_text, scoring_prompt)
+            scored = _score_match(client, title, jd, resume_text, scoring_prompt)
         except Exception as e:
             typer.echo(f"  [Skip] Scoring error: {e}\n", err=True)
             record["action"] = "skipped_scoring_error"
             results.append(record)
             continue
 
-        record["score"]    = score
-        record["reason"]   = reason
-        record["priority"] = priority
+        record.update({
+            "score":             scored["score"],
+            "fit_score":         scored["fit_score"],
+            "fit_reason":        scored["fit_reason"],
+            "preference_score":  scored["preference_score"],
+            "preference_reason": scored["preference_reason"],
+            "reason":            scored["reason"],
+            "priority":          scored["priority"],
+        })
 
-        # Save to cache (include work_model so repeat runs can filter without re-fetching JD)
-        cache[url] = {"score": score, "reason": reason, "priority": priority,
-                      "resume_hash": resume_hash, "work_model": detected_wm}
+        # Save to cache keyed by url|resume_hash|tags_hash
+        cache[cache_key] = {
+            "score":             scored["score"],
+            "fit_score":         scored["fit_score"],
+            "fit_reason":        scored["fit_reason"],
+            "preference_score":  scored["preference_score"],
+            "preference_reason": scored["preference_reason"],
+            "reason":            scored["reason"],
+            "priority":          scored["priority"],
+            "resume_hash":       resume_hash,
+            "work_model":        detected_wm,
+        }
         _save_cache(cache)
 
-        priority_tag = f" [{priority}]" if priority else ""
-        if score >= threshold:
-            typer.echo(f"  [QUALIFYING] Score {score}/100{priority_tag} — {reason}\n", err=True)
+        priority_tag = f" [{scored['priority']}]" if scored["priority"] else ""
+        if scored["score"] >= threshold:
+            typer.echo(f"  [QUALIFYING] Score {scored['score']}/100{priority_tag} — {scored['fit_reason']}\n", err=True)
             record["action"] = "qualifying"
         else:
-            typer.echo(f"  Score {score}/100{priority_tag} — {reason}\n", err=True)
+            typer.echo(f"  Score {scored['score']}/100{priority_tag} — {scored['fit_reason']}\n", err=True)
             record["action"] = "scored_below_threshold"
 
         results.append(record)
@@ -1444,11 +1514,12 @@ async def _score_more_pipeline() -> None:
         pending_file.unlink(missing_ok=True)
         return
 
-    role       = data.get("role", "Software Engineer")
-    threshold  = int(data.get("threshold", 80))
-    location   = data.get("location", "")
-    work_model = data.get("work_model", "")
-    resume_pdf = Path(data.get("resume_pdf", str(RESUME_PDF)))
+    role          = data.get("role", "Software Engineer")
+    threshold     = int(data.get("threshold", 80))
+    location      = data.get("location", "")
+    work_model    = data.get("work_model", "")
+    resume_pdf    = Path(data.get("resume_pdf", str(RESUME_PDF)))
+    dtags: list   = data.get("direction_tags", [])
 
     SCORE_BATCH_SIZE = 50
     batch     = all_pending[:SCORE_BATCH_SIZE]
@@ -1470,8 +1541,9 @@ async def _score_more_pipeline() -> None:
         typer.echo(f"[!] Failed to parse resume: {e}", err=True)
         raise typer.Exit(1)
     Path("last_resume_text.txt").write_text(resume_text, encoding="utf-8")
-    scoring_prompt = _build_scoring_prompt(profile)
+    scoring_prompt = _build_scoring_prompt(profile, dtags)
     resume_hash = hashlib.md5(resume_pdf.read_bytes()).hexdigest()[:16]
+    tags_hash   = hashlib.md5(json.dumps(sorted(dtags)).encode()).hexdigest()[:8]
     cache = _load_cache()
     cache_hits = 0
 
@@ -1497,16 +1569,20 @@ async def _score_more_pipeline() -> None:
         typer.echo(f"[{i:02d}/{len(batch):02d}] {title} @ {company}", err=True)
 
         record: dict = {
-            "job_title":    title,
-            "company_name": company,
-            "location":     job.get("location", ""),
-            "work_model":   job.get("work_model", ""),
-            "link":         url,
-            "source":       job.get("source", "hanzilla"),
-            "score":        None,
-            "reason":       None,
-            "priority":     None,
-            "action":       None,
+            "job_title":         title,
+            "company_name":      company,
+            "location":          job.get("location", ""),
+            "work_model":        job.get("work_model", ""),
+            "link":              url,
+            "source":            job.get("source", "hanzilla"),
+            "score":             None,
+            "fit_score":         None,
+            "fit_reason":        None,
+            "preference_score":  None,
+            "preference_reason": None,
+            "reason":            None,
+            "priority":          None,
+            "action":            None,
         }
 
         if _SENIOR_FILTER.search(title):
@@ -1515,9 +1591,9 @@ async def _score_more_pipeline() -> None:
             new_results.append(record)
             continue
 
-        cached = cache.get(url)
+        cache_key = f"{url}|{resume_hash}|{tags_hash}"
+        cached = cache.get(cache_key)
         if cached and cached.get("resume_hash") == resume_hash:
-            score, reason, priority = cached["score"], cached["reason"], cached.get("priority")
             cached_wm = cached.get("work_model", "")
             if cached_wm:
                 record["work_model"] = cached_wm
@@ -1526,10 +1602,18 @@ async def _score_more_pipeline() -> None:
                 new_results.append(record)
                 continue
             cache_hits += 1
-            priority_tag = f" [{priority}]" if priority else ""
-            typer.echo(f"  [Cache] Score {score}/100{priority_tag} — {reason}\n", err=True)
-            record.update({"score": score, "reason": reason, "priority": priority,
-                           "action": "qualifying" if score >= threshold else "scored_below_threshold"})
+            priority_tag = f" [{cached.get('priority')}]" if cached.get("priority") else ""
+            typer.echo(f"  [Cache] Score {cached['score']}/100{priority_tag} — {cached.get('fit_reason','')}\n", err=True)
+            record.update({
+                "score":             cached["score"],
+                "fit_score":         cached.get("fit_score"),
+                "fit_reason":        cached.get("fit_reason", ""),
+                "preference_score":  cached.get("preference_score"),
+                "preference_reason": cached.get("preference_reason", ""),
+                "reason":            cached.get("reason", ""),
+                "priority":          cached.get("priority"),
+                "action":            "qualifying" if cached["score"] >= threshold else "scored_below_threshold",
+            })
             new_results.append(record)
             location_passed += 1
             continue
@@ -1552,24 +1636,41 @@ async def _score_more_pipeline() -> None:
         location_passed += 1
 
         try:
-            score, reason, priority = _score_match(client, title, jd, resume_text, scoring_prompt)
+            scored = _score_match(client, title, jd, resume_text, scoring_prompt)
         except Exception as e:
             typer.echo(f"  [Skip] Scoring error: {e}\n", err=True)
             record["action"] = "skipped_scoring_error"
             new_results.append(record)
             continue
 
-        record.update({"score": score, "reason": reason, "priority": priority})
-        cache[url] = {"score": score, "reason": reason, "priority": priority,
-                      "resume_hash": resume_hash, "work_model": detected_wm}
+        record.update({
+            "score":             scored["score"],
+            "fit_score":         scored["fit_score"],
+            "fit_reason":        scored["fit_reason"],
+            "preference_score":  scored["preference_score"],
+            "preference_reason": scored["preference_reason"],
+            "reason":            scored["reason"],
+            "priority":          scored["priority"],
+        })
+        cache[cache_key] = {
+            "score":             scored["score"],
+            "fit_score":         scored["fit_score"],
+            "fit_reason":        scored["fit_reason"],
+            "preference_score":  scored["preference_score"],
+            "preference_reason": scored["preference_reason"],
+            "reason":            scored["reason"],
+            "priority":          scored["priority"],
+            "resume_hash":       resume_hash,
+            "work_model":        detected_wm,
+        }
         _save_cache(cache)
 
-        priority_tag = f" [{priority}]" if priority else ""
-        if score >= threshold:
-            typer.echo(f"  [QUALIFYING] Score {score}/100{priority_tag} — {reason}\n", err=True)
+        priority_tag = f" [{scored['priority']}]" if scored["priority"] else ""
+        if scored["score"] >= threshold:
+            typer.echo(f"  [QUALIFYING] Score {scored['score']}/100{priority_tag} — {scored['fit_reason']}\n", err=True)
             record["action"] = "qualifying"
         else:
-            typer.echo(f"  Score {score}/100{priority_tag} — {reason}\n", err=True)
+            typer.echo(f"  Score {scored['score']}/100{priority_tag} — {scored['fit_reason']}\n", err=True)
             record["action"] = "scored_below_threshold"
 
         new_results.append(record)
