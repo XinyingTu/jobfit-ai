@@ -82,6 +82,7 @@ _lock = threading.Lock()
 
 
 def _run(cmd: list) -> None:
+    print(f"[subprocess] starting: {' '.join(cmd)}", flush=True)
     try:
         proc = subprocess.Popen(
             cmd,
@@ -96,13 +97,16 @@ def _run(cmd: list) -> None:
         for line in iter(proc.stdout.readline, ""):
             stripped = line.rstrip()
             if stripped:
+                print(stripped, flush=True)  # tee to Railway Deploy Logs
                 with _lock:
                     _state["lines"].append(stripped)
         proc.wait()
+        print(f"[subprocess] exited with code {proc.returncode}", flush=True)
         if proc.returncode != 0:
             with _lock:
                 _state["error"] = f"Process exited with code {proc.returncode}"
     except Exception as exc:
+        print(f"[subprocess] ERROR launching process: {exc}", flush=True)
         with _lock:
             _state["error"] = str(exc)
     finally:
