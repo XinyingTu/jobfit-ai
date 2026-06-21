@@ -10,7 +10,7 @@ Live demo: https://jobfit-ai-production-d2fd.up.railway.app/
 
 ## What it does
 
-Sifting through job boards is exhausting when most postings look the same until you read the fine print. JobFit AI scrapes curated GitHub job lists, runs each opportunity through Claude with your actual resume, and returns a dual score: *fit* (does your background match?) and *preference* (does it match what you said you're looking for?). The two don't always agree — a job you're overqualified for scores low on fit but high on preference, and that distinction matters when you're deciding where to spend energy. You pick a direction tag (e.g. "AI Engineer", "Quant"), upload your resume once, and get an explainable ranked list instead of a black box.
+Most job tools tell you "here are 500 openings." JobFit AI tells you "here are the 5 worth your weekend." Built specifically for students hunting Tech and Finance internships, it pulls from curated GitHub job lists, then uses Claude to score each posting on two things — how well it fits your background, and how well it matches what you're actually looking for. Pick a direction tag, upload your resume once, get an explainable ranked list. For any job that catches your eye, an integrated AI assistant tells you what's next.
 
 ---
 
