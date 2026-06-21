@@ -1270,10 +1270,15 @@ async def _scan_pipeline(
     if not resume_pdf.exists():
         typer.echo(f"[!] '{resume_pdf}' not found.", err=True)
         raise typer.Exit(1)
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
     if not api_key:
-        typer.echo("[!] ANTHROPIC_API_KEY environment variable is not set.", err=True)
+        typer.echo(
+            "[!] ANTHROPIC_API_KEY is not set or is empty — "
+            "set it as an environment variable and restart the server.",
+            err=True,
+        )
         raise typer.Exit(1)
+    typer.echo(f"[*] ANTHROPIC_API_KEY present (length={len(api_key)})", err=True)
 
     client = anthropic.Anthropic(api_key=api_key)
 
@@ -1285,7 +1290,12 @@ async def _scan_pipeline(
         typer.echo("[!] Daily Claude quota reached — try again tomorrow.", err=True)
         raise typer.Exit(1)
     except Exception as e:
-        typer.echo(f"[!] Failed to parse resume PDF: {e}", err=True)
+        import traceback
+        typer.echo(
+            f"[!] Failed to parse resume PDF: {type(e).__name__}: {e}\n"
+            + traceback.format_exc(),
+            err=True,
+        )
         raise typer.Exit(1)
     typer.echo(f"[✓] Profile: {profile.get('name')} | {profile.get('school')} | GPA {profile.get('gpa')}", err=True)
     typer.echo(f"    Skills: {', '.join(profile.get('skills') or [])}", err=True)
