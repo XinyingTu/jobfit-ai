@@ -13,7 +13,6 @@ from typing import Optional
 
 import anthropic
 import typer
-from playwright.async_api import async_playwright
 
 import claude_budget
 
@@ -357,6 +356,7 @@ async def _scrape_builtin(
         filters.append("vancouver")
     label = f"{role!r}" + (f" [{', '.join(filters)}]" if filters else "")
 
+    from playwright.async_api import async_playwright
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(headless=True)
         context = await browser.new_context(
@@ -938,43 +938,21 @@ def _scrape_github_format_c(limit: int, url: str, source: str) -> list[dict]:
 # JD extraction
 # ---------------------------------------------------------------------------
 
-async def _scrape_jd(url: str) -> str:
-    """Return the full job description text from a BuiltIn or Indeed job page."""
-    async with async_playwright() as pw:
-        browser = await pw.chromium.launch(headless=True)
-        context = await browser.new_context(
-            user_agent=(
-                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/124.0.0.0 Safari/537.36"
-            )
+def _scrape_jd(url: str) -> str:
+    """Best-effort HTTP fetch of JD text. Returns '' on failure or if content < 200 chars."""
+    import urllib.request
+    try:
+        req = urllib.request.Request(
+            url,
+            headers={"User-Agent": "Mozilla/5.0 (compatible; JobScanner/1.0)"},
         )
-        page = await context.new_page()
-        await page.goto(url, wait_until="domcontentloaded", timeout=30_000)
-        await page.wait_for_timeout(2_500)
-        jd = await page.evaluate("""
-            () => {
-                const candidates = [
-                    '#jobDescriptionText',
-                    '[class*="jobsearch-jobDescriptionText"]',
-                    '.jobsearch-JobComponent-description',
-                    '[data-id="job-description"]',
-                    '[class*="job-description"]',
-                    '[class*="jobDescription"]',
-                    'article',
-                    '[class*="description"]',
-                ];
-                for (const sel of candidates) {
-                    const el = document.querySelector(sel);
-                    if (el && (el.innerText || '').length > 200)
-                        return el.innerText.trim();
-                }
-                const main = document.querySelector('main') || document.body;
-                return (main.innerText || '').slice(0, 10000);
-            }
-        """)
-        await browser.close()
-    return (jd or "").strip()
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            raw = resp.read().decode("utf-8", errors="replace")
+        text = re.sub(r"<[^>]+>", " ", raw)
+        text = re.sub(r"\s+", " ", text).strip()
+        return text if len(text) >= 200 else ""
+    except Exception:
+        return ""
 
 
 # ---------------------------------------------------------------------------
@@ -1010,7 +988,11 @@ def _score_match(
                 "role": "user",
                 "content": (
                     f"<job_title>{job_title}</job_title>\n\n"
-                    f"<job_description>\n{jd}\n</job_description>\n\n"
+                    f"<job_description>\n"
+                    + (jd if jd else
+                       "(No job description available — score fit based on job title and company name only; "
+                       "reflect uncertainty with a moderate fit_score)")
+                    + f"\n</job_description>\n\n"
                     "Score this match."
                 ),
             }
@@ -1428,6 +1410,7 @@ async def _scan_pipeline(
             "reason":            None,
             "priority":          None,
             "action":            None,
+            "jd_available":      True,
         }
 
         # Senior pre-filter
@@ -1461,18 +1444,18 @@ async def _scan_pipeline(
                 "reason":            cached.get("reason", ""),
                 "priority":          cached.get("priority"),
                 "action":            "qualifying" if cached["score"] >= threshold else "scored_below_threshold",
+                "jd_available":      cached.get("jd_available", True),
             })
             results.append(record)
             location_passed += 1
             continue
 
-        # Fetch JD — needed for location filter, work model detection, and scoring
-        jd = await _scrape_jd(url)
-        if not jd:
-            typer.echo("  [Skip] Could not fetch job description.\n", err=True)
-            record["action"] = "skipped_no_jd"
-            results.append(record)
-            continue
+        # Fetch JD — best-effort; scoring continues even if unavailable
+        jd = _scrape_jd(url)
+        jd_available = bool(jd)
+        record["jd_available"] = jd_available
+        if not jd_available:
+            typer.echo("  [!] No JD fetched — will score on title/company only.\n", err=True)
 
         # Detect work model and apply combined location + work model filter
         detected_wm = _detect_work_model(job.get("location", ""), jd)
@@ -1506,6 +1489,7 @@ async def _scan_pipeline(
             "preference_reason": scored["preference_reason"],
             "reason":            scored["reason"],
             "priority":          scored["priority"],
+            "jd_available":      jd_available,
         })
 
         # Save to cache keyed by url|resume_hash|tags_hash
@@ -1519,6 +1503,7 @@ async def _scan_pipeline(
             "priority":          scored["priority"],
             "resume_hash":       resume_hash,
             "work_model":        detected_wm,
+            "jd_available":      jd_available,
         }
         _save_cache(cache)
 
@@ -1658,6 +1643,7 @@ async def _score_more_pipeline() -> None:
             "reason":            None,
             "priority":          None,
             "action":            None,
+            "jd_available":      True,
         }
 
         if _SENIOR_FILTER.search(title):
@@ -1688,17 +1674,17 @@ async def _score_more_pipeline() -> None:
                 "reason":            cached.get("reason", ""),
                 "priority":          cached.get("priority"),
                 "action":            "qualifying" if cached["score"] >= threshold else "scored_below_threshold",
+                "jd_available":      cached.get("jd_available", True),
             })
             new_results.append(record)
             location_passed += 1
             continue
 
-        jd = await _scrape_jd(url)
-        if not jd:
-            typer.echo("  [Skip] Could not fetch JD.\n", err=True)
-            record["action"] = "skipped_no_jd"
-            new_results.append(record)
-            continue
+        jd = _scrape_jd(url)
+        jd_available = bool(jd)
+        record["jd_available"] = jd_available
+        if not jd_available:
+            typer.echo("  [!] No JD fetched — will score on title/company only.\n", err=True)
 
         detected_wm = _detect_work_model(job.get("location", ""), jd)
         if detected_wm:
@@ -1729,6 +1715,7 @@ async def _score_more_pipeline() -> None:
             "preference_reason": scored["preference_reason"],
             "reason":            scored["reason"],
             "priority":          scored["priority"],
+            "jd_available":      jd_available,
         })
         cache[cache_key] = {
             "score":             scored["score"],
@@ -1740,6 +1727,7 @@ async def _score_more_pipeline() -> None:
             "priority":          scored["priority"],
             "resume_hash":       resume_hash,
             "work_model":        detected_wm,
+            "jd_available":      jd_available,
         }
         _save_cache(cache)
 

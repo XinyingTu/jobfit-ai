@@ -470,6 +470,11 @@
             </div>
             {isQualifying && <span className="badge badge-qualifying">✓ Match</span>}
             {job.priority && <span className="badge badge-swe">{job.priority}</span>}
+            {job.jd_available === false && (
+              <span style={{ fontSize: '10px', color: '#94a3b8', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '4px', padding: '1px 6px' }}>
+                Limited info: scored on title/company only
+              </span>
+            )}
           </div>
 
           <div>
