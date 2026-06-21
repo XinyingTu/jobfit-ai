@@ -574,9 +574,17 @@ def _scrape_github(limit: int, url: str = GITHUB_README, source: str = "hanzilla
     typer.echo(f"[*] Fetching GitHub: {url}", err=True)
     try:
         with urllib.request.urlopen(url, timeout=15) as resp:
+            status = getattr(resp, "status", "?")
             raw = resp.read().decode("utf-8")
+        typer.echo(f"[*] HTTP {status} — {len(raw)} bytes from {url}", err=True)
     except Exception as e:
-        typer.echo(f"[!] Failed to fetch {url}: {e}", err=True)
+        import traceback
+        typer.echo(f"[!] Failed to fetch {url}: {type(e).__name__}: {e}", err=True)
+        typer.echo(traceback.format_exc(), err=True)
+        return []
+
+    if not raw.strip():
+        typer.echo(f"[!] Empty response body from {url}", err=True)
         return []
 
     # Regex to extract apply URL from [Apply](<URL>) or [Apply](URL)
@@ -588,6 +596,9 @@ def _scrape_github(limit: int, url: str = GITHUB_README, source: str = "hanzilla
 
     jobs: list[dict] = []
     seen_links: set[str] = set()
+    n_table_rows = 0
+    n_closed = 0
+    n_no_url = 0
 
     for line in raw.splitlines():
         if len(jobs) >= limit:
@@ -599,7 +610,11 @@ def _scrape_github(limit: int, url: str = GITHUB_README, source: str = "hanzilla
             continue
         if re.match(r'^\|[\s\-:]+\|', line):
             continue
+
+        n_table_rows += 1
+
         if _CLOSED_SIGNAL.search(line):
+            n_closed += 1
             continue
 
         cells = [c.strip() for c in line.split("|")]
@@ -617,6 +632,7 @@ def _scrape_github(limit: int, url: str = GITHUB_README, source: str = "hanzilla
 
         # Skip the header row
         if raw_title.lower() in ("title", "**title**"):
+            n_table_rows -= 1
             continue
 
         # Clean title
@@ -628,6 +644,7 @@ def _scrape_github(limit: int, url: str = GITHUB_README, source: str = "hanzilla
         # Extract apply URL
         m = _apply_url.search(apply_cell)
         if not m:
+            n_no_url += 1
             continue
         link = m.group(1)
         if link in seen_links:
@@ -642,7 +659,14 @@ def _scrape_github(limit: int, url: str = GITHUB_README, source: str = "hanzilla
             "source":       source,
         })
 
-    typer.echo(f"[*] Parsed {len(jobs)} listings from GitHub README.", err=True)
+    typer.echo(
+        f"[*] Parsed {len(jobs)} listings from {url.split('/')[-1]} "
+        f"(rows={n_table_rows}, closed={n_closed}, no_url={n_no_url}).",
+        err=True,
+    )
+    if n_table_rows == 0:
+        typer.echo(f"[!] WARNING: 0 table rows found — content may not be markdown or URL returned wrong file.", err=True)
+        typer.echo(f"[!] First 500 chars: {raw[:500]!r}", err=True)
     return jobs[:limit]
 
 
@@ -657,9 +681,17 @@ def _scrape_github_format_a(limit: int, url: str, source: str) -> list[dict]:
     typer.echo(f"[*] Fetching GitHub: {url}", err=True)
     try:
         with urllib.request.urlopen(url, timeout=15) as resp:
+            status = getattr(resp, "status", "?")
             raw = resp.read().decode("utf-8")
+        typer.echo(f"[*] HTTP {status} — {len(raw)} bytes", err=True)
     except Exception as e:
-        typer.echo(f"[!] Failed to fetch {url}: {e}", err=True)
+        import traceback
+        typer.echo(f"[!] Failed to fetch {url}: {type(e).__name__}: {e}", err=True)
+        typer.echo(traceback.format_exc(), err=True)
+        return []
+
+    if not raw.strip():
+        typer.echo(f"[!] Empty response body from {url}", err=True)
         return []
 
     _md_link = re.compile(r'\[([^\]]+)\]\((https?://[^)]+)\)')
@@ -740,9 +772,17 @@ def _scrape_github_format_b(limit: int, url: str, source: str) -> list[dict]:
     typer.echo(f"[*] Fetching GitHub: {url}", err=True)
     try:
         with urllib.request.urlopen(url, timeout=15) as resp:
+            status = getattr(resp, "status", "?")
             raw = resp.read().decode("utf-8")
+        typer.echo(f"[*] HTTP {status} — {len(raw)} bytes", err=True)
     except Exception as e:
-        typer.echo(f"[!] Failed to fetch {url}: {e}", err=True)
+        import traceback
+        typer.echo(f"[!] Failed to fetch {url}: {type(e).__name__}: {e}", err=True)
+        typer.echo(traceback.format_exc(), err=True)
+        return []
+
+    if not raw.strip():
+        typer.echo(f"[!] Empty response body from {url}", err=True)
         return []
 
     _strong = re.compile(r'<strong>([^<]+)</strong>')
@@ -817,9 +857,17 @@ def _scrape_github_format_c(limit: int, url: str, source: str) -> list[dict]:
     typer.echo(f"[*] Fetching GitHub: {url}", err=True)
     try:
         with urllib.request.urlopen(url, timeout=15) as resp:
+            status = getattr(resp, "status", "?")
             raw = resp.read().decode("utf-8")
+        typer.echo(f"[*] HTTP {status} — {len(raw)} bytes", err=True)
     except Exception as e:
-        typer.echo(f"[!] Failed to fetch {url}: {e}", err=True)
+        import traceback
+        typer.echo(f"[!] Failed to fetch {url}: {type(e).__name__}: {e}", err=True)
+        typer.echo(traceback.format_exc(), err=True)
+        return []
+
+    if not raw.strip():
+        typer.echo(f"[!] Empty response body from {url}", err=True)
         return []
 
     # Matches [![inner_text](inner_url)](outer_url) — captures apply_url
@@ -1283,7 +1331,9 @@ async def _scan_pipeline(
     # Stage 1 — scrape all listings (no limit; scraping is free)
     jobs: list[dict] = []
     for fn, url, src in active_sources:
+        before = len(jobs)
         jobs += fn(9999, url, src)
+        typer.echo(f"[*] Source {src!r}: {len(jobs) - before} listings.", err=True)
 
     # Deduplicate by link
     seen: set[str] = set()
