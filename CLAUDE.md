@@ -81,7 +81,7 @@ Many more repos are defined (format_a/b/c scrapers) but not wired into `_ALL_SOU
 ## Important Constraints
 
 ### Security / Data
-- **NEVER fabricate resume content.** All resume content comes from `Xinying Tu resume.pdf` / `Xinying Tu resume.txt` on disk only.
+- **NEVER fabricate resume content.** All resume content comes from the resume PDF/TXT files on disk only.
 - **NEVER add apply/form-fill automation.** Out of scope by design.
 
 ### Python 3.9 Compatibility
@@ -134,8 +134,8 @@ Key rules enforced in system prompt:
 
 Config in `scan_config.json` under `"notify"`:
 - SMTP: `smtp.gmail.com:587` with STARTTLS
-- `smtp_user`: `xinyingtu0708@gmail.com` (Gmail App Password)
-- `to_addr`: `xinyingtu@outlook.com`
+- `smtp_user`: `your_email@gmail.com` (Gmail App Password)
+- `to_addr`: `your_email@example.com`
 - Dedup via `last_notified.json` — only new URLs are emailed
 - `daily_scan.py --notify-only` to re-send without re-scraping
 

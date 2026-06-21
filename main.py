@@ -53,8 +53,8 @@ GITHUB_MGMT_INTERN         = "https://raw.githubusercontent.com/hanzili/2026-Man
 GITHUB_AI_COLLEGE          = "https://raw.githubusercontent.com/hanzili/2026-AI-College-Jobs/main/README.md"
 GITHUB_SWE_COLLEGE         = "https://raw.githubusercontent.com/hanzili/2026-SWE-College-Jobs/main/README.md"
 GITHUB_CANADA_INTERN       = "https://raw.githubusercontent.com/hanzili/Canadian-Tech-Internships-2026-hanzilla/main/README.md"
-RESUME_TXT        = Path("Xinying Tu resume.txt")
-RESUME_PDF        = Path("Xinying Tu resume.pdf")
+RESUME_TXT        = Path("your_resume.txt")
+RESUME_PDF        = Path("your_resume.pdf")
 DIGEST_FILE       = Path("daily_digest.md")
 SCORE_CACHE_FILE  = Path("score_cache.json")
 
@@ -1215,7 +1215,7 @@ def scan(
     ),
     resume_pdf: str = typer.Option(
         str(RESUME_PDF), "--resume-pdf",
-        help="Path to resume PDF (default: 'Xinying Tu resume.pdf')",
+        help="Path to resume PDF (default: 'your_resume.pdf')",
     ),
     direction_tags: str = typer.Option(
         "", "--direction-tags",
