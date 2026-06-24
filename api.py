@@ -7,6 +7,7 @@ import os
 import subprocess
 import sys
 import threading
+import time
 import uuid
 from pathlib import Path
 from typing import Optional
@@ -316,12 +317,25 @@ async def chat_job(req: _JobChatReq):
     )
 
     client = anthropic.Anthropic(api_key=api_key)
-    resp = client.messages.create(
-        model="claude-haiku-4-5-20251001",
-        max_tokens=2048,
-        system=system,
-        messages=[{"role": m.role, "content": m.content} for m in req.messages],
-    )
+    resp = None
+    for attempt in range(2):
+        try:
+            resp = client.messages.create(
+                model="claude-haiku-4-5-20251001",
+                max_tokens=2048,
+                system=system,
+                messages=[{"role": m.role, "content": m.content} for m in req.messages],
+            )
+            break
+        except anthropic.APIConnectionError as e:
+            print(
+                f"[chat-job] APIConnectionError attempt {attempt + 1}/2: {repr(e)} | cause: {repr(e.__cause__)}",
+                flush=True,
+            )
+            if attempt == 0:
+                time.sleep(1)
+    if resp is None:
+        return JSONResponse({"error": "AI 助手暂时连接失败，请重试"}, status_code=503)
     claude_budget.record()
     return {"reply": resp.content[0].text}
 
