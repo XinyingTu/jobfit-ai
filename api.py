@@ -291,7 +291,16 @@ async def chat_job(req: _JobChatReq):
 
     resume_text = ""
     if Path("last_resume_text.txt").exists():
-        resume_text = Path("last_resume_text.txt").read_text(encoding="utf-8")
+        resume_text = Path("last_resume_text.txt").read_text(encoding="utf-8").strip()
+
+    if resume_text:
+        resume_section = f"## Candidate's Resume\n{resume_text}"
+    else:
+        resume_section = (
+            "## Candidate's Resume\n"
+            "No resume on file. The chat interface has no file upload — do NOT ask the user "
+            "to share their resume. Base your response solely on the job title and description above."
+        )
 
     system = (
         "You are a job application assistant embedded in a web app. "
@@ -313,7 +322,7 @@ async def chat_job(req: _JobChatReq):
         "Never output raw asterisks or pound signs as literal characters.\n\n"
         f"## Target Role\n{req.job_title} at {req.company}\n\n"
         f"## Job Description\n{req.jd or 'Not provided — base your answer on the role title.'}\n\n"
-        f"## User's Resume\n{resume_text or 'Not available.'}"
+        f"{resume_section}"
     )
 
     client = anthropic.Anthropic(api_key=api_key)
