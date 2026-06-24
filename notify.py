@@ -139,7 +139,7 @@ def send_digest(config: Optional[dict] = None) -> int:
     smtp_host = notify_cfg.get("smtp_host", "smtp.gmail.com")
     smtp_port = int(notify_cfg.get("smtp_port", 587))
     smtp_user = notify_cfg.get("smtp_user", "")
-    smtp_password = os.environ.get("SMTP_PASSWORD") or notify_cfg.get("smtp_password", "")
+    smtp_password = (os.environ.get("SMTP_PASSWORD") or notify_cfg.get("smtp_password", "")).strip()
     from_addr = notify_cfg.get("from_addr") or smtp_user
     to_addr = notify_cfg.get("to_addr", "")
 

@@ -54,7 +54,7 @@ _VALID_DIRECTION_TAGS: set = {
 
 # Admin token for crontab-mutating endpoints. Read from .env; never sent to the
 # frontend. If unset, the admin endpoints are disabled rather than left open.
-_ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "")
+_ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "").strip()
 
 
 def _check_claude_quota() -> None:
@@ -237,7 +237,7 @@ class _JobChatReq(BaseModel):
 @app.post("/api/chat")
 async def chat(req: _ChatReq):
     _check_claude_quota()
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
     if not api_key:
         return JSONResponse({"error": "ANTHROPIC_API_KEY not set."}, status_code=500)
 
@@ -285,7 +285,7 @@ async def chat(req: _ChatReq):
 @app.post("/api/chat-job")
 async def chat_job(req: _JobChatReq):
     _check_claude_quota()
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
     if not api_key:
         return JSONResponse({"error": "ANTHROPIC_API_KEY not set."}, status_code=500)
 

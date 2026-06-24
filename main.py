@@ -1582,7 +1582,7 @@ async def _score_more_pipeline() -> None:
     batch     = all_pending[:SCORE_BATCH_SIZE]
     remaining = all_pending[SCORE_BATCH_SIZE:]
 
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
     if not api_key:
         typer.echo("[!] ANTHROPIC_API_KEY not set.", err=True)
         raise typer.Exit(1)
