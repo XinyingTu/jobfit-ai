@@ -400,6 +400,24 @@
   <script type="text/babel">
     const { useState, useEffect, useRef } = React;
 
+    // ── session ID ────────────────────────────────────────────
+    function getOrCreateSessionId() {
+      let id = localStorage.getItem('sessionId');
+      if (!id) {
+        id = crypto.randomUUID();
+        localStorage.setItem('sessionId', id);
+      }
+      return id;
+    }
+    const SESSION_ID = getOrCreateSessionId();
+
+    function apiFetch(path, opts = {}) {
+      return fetch(path, {
+        ...opts,
+        headers: { 'X-Session-ID': SESSION_ID, ...(opts.headers || {}) },
+      });
+    }
+
     // ── helpers ──────────────────────────────────────────────
     function stripMetaSections(md) {
       const metaPattern = /^#{1,3}\s+(application checklist|checklist|next steps?|how to (use|apply)|tips for applying|summary)/i;
@@ -604,7 +622,7 @@
         fd.append('direction_tags', JSON.stringify(directionTags));
 
         try {
-          const res = await fetch('/api/scan', { method: 'POST', body: fd });
+          const res = await apiFetch('/api/scan', { method: 'POST', body: fd });
           const data = await res.json();
           if (!res.ok) { setError(data.detail || data.error || 'Failed to start scan.'); setLoading(false); return; }
           onScanStart({ role, sources: sourcesStr, threshold, workModels: [...workModels], directionTags }, { name, locationPref });
@@ -789,7 +807,7 @@
                       marginLeft:'12px', padding:'4px 12px', fontSize:'12px', cursor:'pointer',
                       background:'#dc2626', color:'#fff', border:'none', borderRadius:'6px',
                     }} onClick={async () => {
-                      await fetch('/api/reset', {method:'POST'});
+                      await apiFetch('/api/reset', {method:'POST'});
                       setError(null);
                     }}>Force Reset</button>
                   )}
@@ -823,14 +841,14 @@
         let seenRunning = false;
         const iv = setInterval(async () => {
           try {
-            const status = await fetch('/api/status').then(r => r.json());
+            const status = await apiFetch('/api/status').then(r => r.json());
             setLogLines(status.lines || []);
             if (status.running) seenRunning = true;
             if (seenRunning && !status.running && status.done) {
               clearInterval(iv);
               setScanning(false);
               setLoadingMore(false);
-              const data = await fetch('/api/results').then(r => r.json());
+              const data = await apiFetch('/api/results').then(r => r.json());
               setResultData(data);
               const t = scanConfig?.threshold ?? 70;
               const q = (data.results || []).filter(r => r.score !== null && r.score >= t);
@@ -843,14 +861,14 @@
 
       async function handleStop() {
         setStopping(true);
-        await fetch('/api/stop', { method: 'POST' }).catch(() => {});
+        await apiFetch('/api/stop', { method: 'POST' }).catch(() => {});
       }
 
       async function handleLoadMore() {
         setLoadingMore(true);
         setLoadMoreError(null);
         try {
-          const res = await fetch('/api/score-more', { method: 'POST' });
+          const res = await apiFetch('/api/score-more', { method: 'POST' });
           if (!res.ok) {
             const data = await res.json().catch(() => ({}));
             setLoadMoreError(data.detail || data.error || 'Failed to load more results.');
@@ -1043,11 +1061,11 @@
 
       async function handleStop() {
         setStopping(true);
-        await fetch('/api/stop', { method: 'POST' }).catch(() => {});
+        await apiFetch('/api/stop', { method: 'POST' }).catch(() => {});
       }
 
       function reloadResults() {
-        fetch('/api/results').then(r => r.json()).then(data => {
+        apiFetch('/api/results').then(r => r.json()).then(data => {
           setResultData(data);
           const t = data.threshold ?? 70;
           const q = (data.results || []).filter(r => r.score !== null && r.score >= t);
@@ -1062,7 +1080,7 @@
         let seenRunning = false;
         const iv = setInterval(async () => {
           try {
-            const status = await fetch('/api/status').then(r => r.json());
+            const status = await apiFetch('/api/status').then(r => r.json());
             if (status.running) seenRunning = true;
             if (seenRunning && !status.running && status.done) {
               clearInterval(iv);
@@ -1080,7 +1098,7 @@
         setLoadingMore(true);
         setLoadMoreError(null);
         try {
-          const res = await fetch('/api/score-more', { method: 'POST' });
+          const res = await apiFetch('/api/score-more', { method: 'POST' });
           if (!res.ok) {
             const data = await res.json().catch(() => ({}));
             setLoadMoreError(data.detail || data.error || 'Failed to load more results.');
@@ -1257,7 +1275,7 @@
         setInput('');
         setLoading(true);
         try {
-          const res = await fetch('/api/chat-job', {
+          const res = await apiFetch('/api/chat-job', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -1422,7 +1440,7 @@
       const [hasLastRun, setHasLastRun] = useState(false);
 
       useEffect(() => {
-        fetch('/api/results')
+        apiFetch('/api/results')
           .then(r => r.json())
           .then(d => setHasLastRun((d.results || []).length > 0))
           .catch(() => {});

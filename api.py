@@ -4,6 +4,7 @@
 import hmac
 import json
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -41,7 +42,14 @@ import claude_budget
 
 UPLOAD_DIR = Path("uploads")
 UPLOAD_DIR.mkdir(exist_ok=True)
+DATA_DIR = Path("data")
+DATA_DIR.mkdir(exist_ok=True)
 MAX_PDF_BYTES = 10 * 1024 * 1024  # 10 MB
+
+# UUID v4 pattern — prevents path traversal in session IDs
+_SESSION_ID_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+)
 
 app = FastAPI(title="Job Agent API")
 
@@ -78,11 +86,37 @@ def _require_admin(token: Optional[str]) -> None:
         raise HTTPException(status_code=401, detail="Invalid or missing admin token.")
 
 
-_state: dict = {"running": False, "lines": [], "error": None, "done": True, "proc": None}
-_lock = threading.Lock()
+_sessions: dict = {}          # session_id → {"state": {...}, "lock": Lock}
+_sessions_lock = threading.Lock()  # guards _sessions dict itself
 
 
-def _run(cmd: list) -> None:
+def _get_session(session_id: str) -> tuple:
+    """Return (state_dict, lock) for the given session, creating it if needed."""
+    with _sessions_lock:
+        if session_id not in _sessions:
+            _sessions[session_id] = {
+                "state": {"running": False, "lines": [], "error": None, "done": True, "proc": None},
+                "lock": threading.Lock(),
+            }
+        entry = _sessions[session_id]
+    return entry["state"], entry["lock"]
+
+
+def _validate_session_id(sid: Optional[str]) -> str:
+    """Validate that sid is a well-formed UUID v4; raise 400 otherwise."""
+    if not sid or not _SESSION_ID_RE.match(sid.strip().lower()):
+        raise HTTPException(status_code=400, detail="Missing or invalid X-Session-ID header.")
+    return sid.strip().lower()
+
+
+def _session_data_dir(session_id: str) -> Path:
+    """Return (and create) the per-session data directory."""
+    p = DATA_DIR / session_id
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def _run(cmd: list, state: dict, lock: threading.Lock) -> None:
     print(f"[subprocess] starting: {' '.join(cmd)}", flush=True)
     try:
         proc = subprocess.Popen(
@@ -93,28 +127,28 @@ def _run(cmd: list) -> None:
             cwd=str(Path(__file__).parent),
             env=os.environ.copy(),
         )
-        with _lock:
-            _state["proc"] = proc
+        with lock:
+            state["proc"] = proc
         for line in iter(proc.stdout.readline, ""):
             stripped = line.rstrip()
             if stripped:
                 print(stripped, flush=True)  # tee to Railway Deploy Logs
-                with _lock:
-                    _state["lines"].append(stripped)
+                with lock:
+                    state["lines"].append(stripped)
         proc.wait()
         print(f"[subprocess] exited with code {proc.returncode}", flush=True)
         if proc.returncode != 0:
-            with _lock:
-                _state["error"] = f"Process exited with code {proc.returncode}"
+            with lock:
+                state["error"] = f"Process exited with code {proc.returncode}"
     except Exception as exc:
         print(f"[subprocess] ERROR launching process: {exc}", flush=True)
-        with _lock:
-            _state["error"] = str(exc)
+        with lock:
+            state["error"] = str(exc)
     finally:
-        with _lock:
-            _state["running"] = False
-            _state["done"] = True
-            _state["proc"] = None
+        with lock:
+            state["running"] = False
+            state["done"] = True
+            state["proc"] = None
 
 
 @app.post("/api/scan")
@@ -126,9 +160,13 @@ async def start_scan(
     location: str = Form(""),
     work_model: str = Form(""),
     direction_tags: str = Form(""),
+    x_session_id: Optional[str] = Header(None),
 ):
-    with _lock:
-        if _state["running"]:
+    session_id = _validate_session_id(x_session_id)
+    state, lock = _get_session(session_id)
+
+    with lock:
+        if state["running"]:
             return JSONResponse({"error": "A scan is already running."}, status_code=409)
 
     # Refuse before doing any work if the shared daily Claude budget is already
@@ -144,11 +182,13 @@ async def start_scan(
     pdf_path = UPLOAD_DIR / f"{uuid.uuid4().hex}.pdf"
     pdf_path.write_bytes(content)
 
+    data_dir = _session_data_dir(session_id)
     cmd = [
         sys.executable, "main.py", "scan",
         "--resume-pdf", str(pdf_path),
         "--role", role,
         "--threshold", str(threshold),
+        "--data-dir", str(data_dir),
     ]
     if sources.strip():
         cmd += ["--sources", sources.strip()]
@@ -167,26 +207,30 @@ async def start_scan(
     if valid_tags:
         cmd += ["--direction-tags", json.dumps(valid_tags)]
 
-    with _lock:
-        _state.update({"running": True, "lines": [], "error": None, "done": False})
+    with lock:
+        state.update({"running": True, "lines": [], "error": None, "done": False})
 
-    threading.Thread(target=_run, args=(cmd,), daemon=True).start()
+    threading.Thread(target=_run, args=(cmd, state, lock), daemon=True).start()
     return {"status": "started"}
 
 
 @app.get("/api/status")
-def get_status():
-    with _lock:
-        return {k: v for k, v in _state.items() if k != "proc"}
+def get_status(x_session_id: Optional[str] = Header(None)):
+    session_id = _validate_session_id(x_session_id)
+    state, lock = _get_session(session_id)
+    with lock:
+        return {k: v for k, v in state.items() if k != "proc"}
 
 
 @app.post("/api/stop")
-def stop_scan():
+def stop_scan(x_session_id: Optional[str] = Header(None)):
     """Terminate the currently running scan process."""
-    with _lock:
-        if not _state["running"]:
+    session_id = _validate_session_id(x_session_id)
+    state, lock = _get_session(session_id)
+    with lock:
+        if not state["running"]:
             return JSONResponse({"error": "No scan is running."}, status_code=400)
-        proc = _state.get("proc")
+        proc = state.get("proc")
     if proc is not None:
         try:
             proc.terminate()
@@ -196,28 +240,35 @@ def stop_scan():
 
 
 @app.post("/api/reset")
-def reset_state():
+def reset_state(x_session_id: Optional[str] = Header(None)):
     """Clear a stuck scan state."""
-    with _lock:
-        _state.update({"running": False, "lines": [], "error": None, "done": True})
+    session_id = _validate_session_id(x_session_id)
+    state, lock = _get_session(session_id)
+    with lock:
+        state.update({"running": False, "lines": [], "error": None, "done": True})
     return {"status": "reset"}
 
 
 @app.post("/api/score-more")
-def score_more():
+def score_more(x_session_id: Optional[str] = Header(None)):
     """Score the next batch of pending candidates from the last scan."""
     # Refuse before starting if the shared daily Claude budget is already full;
     # per-call enforcement continues inside main.py for mid-run cutoff.
     _check_claude_quota()
 
-    with _lock:
-        if _state["running"]:
-            return JSONResponse({"error": "A scan is already running."}, status_code=409)
-        if not Path("pending_candidates.json").exists():
-            return JSONResponse({"error": "No pending candidates."}, status_code=400)
-        _state.update({"running": True, "lines": [], "error": None, "done": False})
+    session_id = _validate_session_id(x_session_id)
+    state, lock = _get_session(session_id)
+    data_dir = _session_data_dir(session_id)
 
-    threading.Thread(target=_run, args=([sys.executable, "main.py", "score-more"],), daemon=True).start()
+    with lock:
+        if state["running"]:
+            return JSONResponse({"error": "A scan is already running."}, status_code=409)
+        if not (data_dir / "pending_candidates.json").exists():
+            return JSONResponse({"error": "No pending candidates."}, status_code=400)
+        state.update({"running": True, "lines": [], "error": None, "done": False})
+
+    cmd = [sys.executable, "main.py", "score-more", "--data-dir", str(data_dir)]
+    threading.Thread(target=_run, args=(cmd, state, lock), daemon=True).start()
     return {"status": "started"}
 
 
@@ -235,16 +286,19 @@ class _JobChatReq(BaseModel):
     jd: str = ""
 
 @app.post("/api/chat")
-async def chat(req: _ChatReq):
+async def chat(req: _ChatReq, x_session_id: Optional[str] = Header(None)):
     _check_claude_quota()
+    session_id = _validate_session_id(x_session_id)
+    data_dir = _session_data_dir(session_id)
     api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
     if not api_key:
         return JSONResponse({"error": "ANTHROPIC_API_KEY not set."}, status_code=500)
 
     # Build results context from last scan
     results_summary = "No scan results available yet."
-    if Path("last_run.json").exists():
-        data = json.loads(Path("last_run.json").read_text(encoding="utf-8"))
+    last_run_path = data_dir / "last_run.json"
+    if last_run_path.exists():
+        data = json.loads(last_run_path.read_text(encoding="utf-8"))
         lines = []
         for r in (data.get("results") or []):
             if r.get("score") is not None:
@@ -262,8 +316,9 @@ async def chat(req: _ChatReq):
             results_summary = "\n".join(lines[:30])
 
     resume_text = ""
-    if Path("last_resume_text.txt").exists():
-        resume_text = Path("last_resume_text.txt").read_text(encoding="utf-8")
+    resume_text_path = data_dir / "last_resume_text.txt"
+    if resume_text_path.exists():
+        resume_text = resume_text_path.read_text(encoding="utf-8")
 
     system = (
         "You are a job search assistant helping the user with their job applications.\n\n"
@@ -283,15 +338,18 @@ async def chat(req: _ChatReq):
 
 
 @app.post("/api/chat-job")
-async def chat_job(req: _JobChatReq):
+async def chat_job(req: _JobChatReq, x_session_id: Optional[str] = Header(None)):
     _check_claude_quota()
+    session_id = _validate_session_id(x_session_id)
+    data_dir = _session_data_dir(session_id)
     api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
     if not api_key:
         return JSONResponse({"error": "ANTHROPIC_API_KEY not set."}, status_code=500)
 
     resume_text = ""
-    if Path("last_resume_text.txt").exists():
-        resume_text = Path("last_resume_text.txt").read_text(encoding="utf-8").strip()
+    resume_text_path = data_dir / "last_resume_text.txt"
+    if resume_text_path.exists():
+        resume_text = resume_text_path.read_text(encoding="utf-8").strip()
 
     if resume_text:
         resume_section = f"## Candidate's Resume\n{resume_text}"
@@ -350,14 +408,18 @@ async def chat_job(req: _JobChatReq):
 
 
 @app.get("/api/resume-text")
-def get_resume_text():
-    p = Path("last_resume_text.txt")
+def get_resume_text(x_session_id: Optional[str] = Header(None)):
+    session_id = _validate_session_id(x_session_id)
+    data_dir = _session_data_dir(session_id)
+    p = data_dir / "last_resume_text.txt"
     return {"text": p.read_text(encoding="utf-8") if p.exists() else ""}
 
 
 @app.get("/api/results")
-def get_results():
-    p = Path("last_run.json")
+def get_results(x_session_id: Optional[str] = Header(None)):
+    session_id = _validate_session_id(x_session_id)
+    data_dir = _session_data_dir(session_id)
+    p = data_dir / "last_run.json"
     if not p.exists():
         return {"results": [], "total_scraped": 0, "threshold": 70}
     return json.loads(p.read_text(encoding="utf-8"))
