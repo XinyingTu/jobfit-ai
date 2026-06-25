@@ -1068,17 +1068,19 @@ def _passes_combined_filter(
     return not city or city in location_str.lower()
 
 
-def _load_cache() -> dict:
-    if SCORE_CACHE_FILE.exists():
+def _load_cache(cache_file: Optional[Path] = None) -> dict:
+    f = cache_file or SCORE_CACHE_FILE
+    if f.exists():
         try:
-            return json.loads(SCORE_CACHE_FILE.read_text(encoding="utf-8"))
+            return json.loads(f.read_text(encoding="utf-8"))
         except Exception:
             return {}
     return {}
 
 
-def _save_cache(cache: dict) -> None:
-    SCORE_CACHE_FILE.write_text(json.dumps(cache, indent=2, ensure_ascii=False), encoding="utf-8")
+def _save_cache(cache: dict, cache_file: Optional[Path] = None) -> None:
+    f = cache_file or SCORE_CACHE_FILE
+    f.write_text(json.dumps(cache, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -1104,8 +1106,10 @@ def _write_digest(
     location_passed: int,
     role: str,
     threshold: int,
+    digest_file: Optional[Path] = None,
 ) -> None:
     """Write qualifying jobs (and below-threshold reviewed jobs) to daily_digest.md."""
+    out   = digest_file or DIGEST_FILE
     today = datetime.date.today().strftime("%B %d, %Y")
     now   = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
 
@@ -1172,8 +1176,8 @@ def _write_digest(
 
     lines += [f"_Generated at {now}_", ""]
 
-    DIGEST_FILE.write_text("\n".join(lines), encoding="utf-8")
-    typer.echo(f"[✓] Digest written to {DIGEST_FILE}  ({len(qualifying)} qualifying jobs)", err=True)
+    out.write_text("\n".join(lines), encoding="utf-8")
+    typer.echo(f"[✓] Digest written to {out}  ({len(qualifying)} qualifying jobs)", err=True)
 
 
 # ---------------------------------------------------------------------------
@@ -1221,6 +1225,10 @@ def scan(
         "", "--direction-tags",
         help='JSON array of direction tags, e.g. \'["AI/ML","Backend"]\'',
     ),
+    data_dir: str = typer.Option(
+        ".", "--data-dir",
+        help="Directory for per-session output files (last_run.json, score_cache.json, etc.)",
+    ),
 ):
     """
     Super Scanner: scrape Hanzilla → filter → score → write daily_digest.md.
@@ -1236,7 +1244,9 @@ def scan(
         python main.py scan --sources "swe-intern,data-intern" --work-model "Remote"
         python main.py scan --role "Financial Analyst" --location "Toronto"
     """
-    asyncio.run(_scan_pipeline(role, sources, threshold, location, work_model, Path(resume_pdf), direction_tags))
+    dd = Path(data_dir)
+    dd.mkdir(parents=True, exist_ok=True)
+    asyncio.run(_scan_pipeline(role, sources, threshold, location, work_model, Path(resume_pdf), direction_tags, dd))
 
 
 async def _scan_pipeline(
@@ -1247,6 +1257,7 @@ async def _scan_pipeline(
     work_model: str = "",
     resume_pdf: Path = RESUME_PDF,
     direction_tags: str = "",
+    data_dir: Path = Path("."),
 ) -> None:
     # Preflight
     if not resume_pdf.exists():
@@ -1281,7 +1292,7 @@ async def _scan_pipeline(
         raise typer.Exit(1)
     typer.echo(f"[✓] Profile: {profile.get('name')} | {profile.get('school')} | GPA {profile.get('gpa')}", err=True)
     typer.echo(f"    Skills: {', '.join(profile.get('skills') or [])}", err=True)
-    Path("last_resume_text.txt").write_text(resume_text, encoding="utf-8")
+    (data_dir / "last_resume_text.txt").write_text(resume_text, encoding="utf-8")
 
     try:
         dtags: list = json.loads(direction_tags) if direction_tags.strip() else []
@@ -1294,7 +1305,8 @@ async def _scan_pipeline(
     # Resume hash + direction-tags hash for cache invalidation
     resume_hash = hashlib.md5(resume_pdf.read_bytes()).hexdigest()[:16]
     tags_hash   = hashlib.md5(json.dumps(sorted(dtags)).encode()).hexdigest()[:8]
-    cache = _load_cache()
+    cache_file  = data_dir / "score_cache.json"
+    cache = _load_cache(cache_file)
     cache_hits = 0
 
     # Resolve active sources
@@ -1365,7 +1377,7 @@ async def _scan_pipeline(
     jobs = jobs[:SCORE_BATCH_SIZE]
 
     if pending_candidates:
-        Path("pending_candidates.json").write_text(
+        (data_dir / "pending_candidates.json").write_text(
             json.dumps({
                 "role": role, "threshold": threshold,
                 "location": location, "work_model": work_model,
@@ -1381,7 +1393,7 @@ async def _scan_pipeline(
             err=True,
         )
     else:
-        Path("pending_candidates.json").unlink(missing_ok=True)
+        (data_dir / "pending_candidates.json").unlink(missing_ok=True)
         typer.echo(f"[*] Sending {len(jobs)} candidates to scoring pipeline…\n", err=True)
 
     results: list[dict] = []
@@ -1505,7 +1517,7 @@ async def _scan_pipeline(
             "work_model":        detected_wm,
             "jd_available":      jd_available,
         }
-        _save_cache(cache)
+        _save_cache(cache, cache_file)
 
         priority_tag = f" [{scored['priority']}]" if scored["priority"] else ""
         if scored["score"] >= threshold:
@@ -1518,7 +1530,7 @@ async def _scan_pipeline(
         results.append(record)
 
     # Save last_run.json (all results, scored first sorted by score desc)
-    scored   = sorted(
+    scored_results = sorted(
         [r for r in results if r["score"] is not None],
         key=lambda r: r["score"], reverse=True,
     )
@@ -1530,16 +1542,17 @@ async def _scan_pipeline(
         "total_scraped":    n_scraped,
         "location_passed":  location_passed,
         "pending_count":    len(pending_candidates),
-        "results":          scored + unscored,
+        "results":          scored_results + unscored,
     }
-    with open("last_run.json", "w", encoding="utf-8") as f:
+    with open(str(data_dir / "last_run.json"), "w", encoding="utf-8") as f:
         json.dump(last_run, f, indent=2, ensure_ascii=False)
     typer.echo("[✓] Full results saved to last_run.json\n", err=True)
 
     # Write digest
-    qualifying     = [r for r in scored if r["score"] >= threshold]
-    also_reviewed  = [r for r in scored if r["score"] < threshold]
-    _write_digest(qualifying, also_reviewed, n_scraped, location_passed, role, threshold)
+    qualifying     = [r for r in scored_results if r["score"] >= threshold]
+    also_reviewed  = [r for r in scored_results if r["score"] < threshold]
+    _write_digest(qualifying, also_reviewed, n_scraped, location_passed, role, threshold,
+                  digest_file=data_dir / "daily_digest.md")
 
     typer.echo(f"\n{'='*60}", err=True)
     typer.echo(
@@ -1553,13 +1566,20 @@ async def _scan_pipeline(
 
 
 @app.command(name="score-more")
-def score_more_cmd():
+def score_more_cmd(
+    data_dir: str = typer.Option(
+        ".", "--data-dir",
+        help="Directory for per-session output files (must match the original scan's --data-dir)",
+    ),
+):
     """Score the next batch of pending candidates from the last scan."""
-    asyncio.run(_score_more_pipeline())
+    dd = Path(data_dir)
+    dd.mkdir(parents=True, exist_ok=True)
+    asyncio.run(_score_more_pipeline(dd))
 
 
-async def _score_more_pipeline() -> None:
-    pending_file = Path("pending_candidates.json")
+async def _score_more_pipeline(data_dir: Path = Path(".")) -> None:
+    pending_file = data_dir / "pending_candidates.json"
     if not pending_file.exists():
         typer.echo("[!] No pending candidates found.", err=True)
         return
@@ -1600,11 +1620,12 @@ async def _score_more_pipeline() -> None:
     except Exception as e:
         typer.echo(f"[!] Failed to parse resume: {e}", err=True)
         raise typer.Exit(1)
-    Path("last_resume_text.txt").write_text(resume_text, encoding="utf-8")
+    (data_dir / "last_resume_text.txt").write_text(resume_text, encoding="utf-8")
     scoring_prompt = _build_scoring_prompt(profile, dtags)
     resume_hash = hashlib.md5(resume_pdf.read_bytes()).hexdigest()[:16]
     tags_hash   = hashlib.md5(json.dumps(sorted(dtags)).encode()).hexdigest()[:8]
-    cache = _load_cache()
+    cache_file  = data_dir / "score_cache.json"
+    cache = _load_cache(cache_file)
     cache_hits = 0
 
     wm_set = {wm.strip() for wm in work_model.split(",") if wm.strip()} if work_model.strip() else set()
@@ -1729,7 +1750,7 @@ async def _score_more_pipeline() -> None:
             "work_model":        detected_wm,
             "jd_available":      jd_available,
         }
-        _save_cache(cache)
+        _save_cache(cache, cache_file)
 
         priority_tag = f" [{scored['priority']}]" if scored["priority"] else ""
         if scored["score"] >= threshold:
@@ -1742,17 +1763,17 @@ async def _score_more_pipeline() -> None:
         new_results.append(record)
 
     # Merge into last_run.json
-    last_run_file = Path("last_run.json")
+    last_run_file = data_dir / "last_run.json"
     last_run = json.loads(last_run_file.read_text(encoding="utf-8")) if last_run_file.exists() else {
         "role": role, "threshold": threshold, "total_scraped": 0,
     }
     existing = last_run.get("results", [])
     existing_urls = {r.get("link") for r in existing}
     merged = existing + [r for r in new_results if r.get("link") not in existing_urls]
-    scored   = sorted([r for r in merged if r["score"] is not None], key=lambda r: r["score"], reverse=True)
+    scored_merged   = sorted([r for r in merged if r["score"] is not None], key=lambda r: r["score"], reverse=True)
     unscored = [r for r in merged if r["score"] is None]
 
-    last_run["results"]       = scored + unscored
+    last_run["results"]       = scored_merged + unscored
     last_run["pending_count"] = len(remaining)
     last_run_file.write_text(json.dumps(last_run, indent=2, ensure_ascii=False), encoding="utf-8")
     typer.echo("[✓] Results merged into last_run.json\n", err=True)
@@ -1765,7 +1786,7 @@ async def _score_more_pipeline() -> None:
         pending_file.unlink(missing_ok=True)
         typer.echo("[✓] All candidates scored.", err=True)
 
-    qualifying = [r for r in scored if r["score"] >= threshold]
+    qualifying = [r for r in scored_merged if r["score"] >= threshold]
     typer.echo(f"\n{'='*60}", err=True)
     typer.echo(
         f"  Done — {len(qualifying)} qualifying  |  {location_passed} scored  |  {cache_hits} from cache",
